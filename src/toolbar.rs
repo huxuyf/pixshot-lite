@@ -4,11 +4,12 @@
 //! 皮肤固定深色（见 `theme::toolbar_skin`），布局按窗口 DPI 换算并在 `WM_DPICHANGED` 重排。
 //!
 //! 按钮为**纯图标**（矢量自绘，见 [`crate::icons`]），依次为
-//! 贴图 / 保存图像 / 复制并关闭 / 复制识别到的文字 / 关闭；
+//! 贴图 / 保存图像 / 复制并关闭 / 关闭；
 //! 悬停延时后在图标上方弹出提示气泡（[`crate::tooltip`]）。
 //!
 //! 控件 ID 保持稳定（E2E 用 `Find-ChildById` 定位，见 `scripts/gui_e2e_*.ps1`）：
-//! 1=贴图 / 2=复制 / 3=保存 / 4=OCR / 5=关闭。
+//! 1=贴图 / 2=复制 / 3=保存 / 5=关闭。**4 是 OCR 按钮的位置，精简版已移除该功能**，
+//! 空着不占位是为了不打乱既有 ID 协议（E2E 与自绘皮肤都按 ID 定位）。
 
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use crate::config;
 use crate::error::{AppError, Result};
 use crate::theme;
 use crate::util::{self, add_button, raw, register_class_w, BtnStyle};
-use crate::{clipboard, icons, imageio, ocr, pin, tooltip};
+use crate::{clipboard, icons, imageio, pin, tooltip};
 
 use windows::Win32::Foundation::{BOOL, COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -30,28 +31,26 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-// 工具栏按钮 ID（与 E2E 的控件查找协议一致）
+// 工具栏按钮 ID（与 E2E 的控件查找协议一致；4 为已移除的 OCR 按钮，留空）
 const BTN_PIN: usize = 1;
 const BTN_COPY: usize = 2;
 const BTN_SAVE: usize = 3;
-const BTN_OCR: usize = 4;
 const BTN_CLOSE: usize = 5;
 /// 按钮在窗口内的从左到右排列顺序（图标顺序 = 需求给定顺序）
-const BTN_ORDER: [usize; 5] = [BTN_PIN, BTN_SAVE, BTN_COPY, BTN_OCR, BTN_CLOSE];
+const BTN_ORDER: [usize; 4] = [BTN_PIN, BTN_SAVE, BTN_COPY, BTN_CLOSE];
 /// 各按钮的悬停提示文字（与 [`BTN_ORDER`] 一一对应）
-const TIP_TEXTS: [&str; 5] = ["贴图", "保存图像", "复制并关闭", "复制识别到的文字", "关闭"];
+const TIP_TEXTS: [&str; 4] = ["贴图", "保存图像", "复制并关闭", "关闭"];
 /// 各按钮的快捷键（与 [`BTN_ORDER`] 一一对应，显示在提示文字之后）
-const SHORTCUTS: [&str; 5] = ["Ctrl+T", "Ctrl+S", "Ctrl+C", "Ctrl+O", "Esc"];
+const SHORTCUTS: [&str; 4] = ["Ctrl+T", "Ctrl+S", "Ctrl+C", "Esc"];
 /// 悬停后弹出提示气泡的延时（毫秒）
 const TIP_DELAY_MS: u32 = 450;
 /// 提示气泡定时器 ID
 const TIMER_TIP: usize = 779;
-/// VK_ESCAPE（关闭）/ VK_T / VK_S / VK_C / VK_O（配合 Ctrl 触发对应动作）
+/// VK_ESCAPE（关闭）/ VK_T / VK_S / VK_C（配合 Ctrl 触发对应动作）
 const VK_ESCAPE: usize = 0x1B;
 const VK_T: usize = 0x54;
 const VK_S: usize = 0x53;
 const VK_C: usize = 0x43;
-const VK_O: usize = 0x4F;
 /// VK_CONTROL（GetKeyState 读物理按键状态）
 const VK_CONTROL: i32 = 0x11;
 
@@ -64,7 +63,7 @@ const TB_PAD_V: i32 = 6;
 /// 按钮到窗口左右边缘的内边距（逻辑像素）。
 const TB_PAD_H: i32 = 6;
 /// 逻辑客户区尺寸（96 DPI 基准）：仅容纳一行方形图标按钮，力求紧凑。
-const TB_W: i32 = TB_BTN_SZ * 5 + TB_GAP * 4 + TB_PAD_H * 2; // 180
+const TB_W: i32 = TB_BTN_SZ * 4 + TB_GAP * 3 + TB_PAD_H * 2; // 144
 /// 高度 = 上内边距 + 按钮 + 下内边距。
 const TB_H: i32 = TB_PAD_V * 2 + TB_BTN_SZ; // 44
 /// 窗口圆角半径（逻辑像素）。
@@ -72,8 +71,8 @@ const TB_RADIUS: i32 = 8;
 
 struct ToolbarData {
     image: Arc<CapturedImage>,
-    /// 五个图标按钮，顺序见 [`BTN_ORDER`]
-    buttons: [HWND; 5],
+    /// 四个图标按钮，顺序见 [`BTN_ORDER`]
+    buttons: [HWND; 4],
     /// 工具栏皮肤：固定深色
     skin: theme::Theme,
     /// Mica 背景是否启用（工具栏固定深色为纯色面，恒为 false）
@@ -115,7 +114,7 @@ unsafe fn run_impl(image: Arc<CapturedImage>) -> Result<()> {
 
     let data = Box::into_raw(Box::new(ToolbarData {
         image,
-        buttons: [HWND::default(); 5],
+        buttons: [HWND::default(); 4],
         skin: theme::toolbar_skin(),
         backdrop: false,
         fx: util::HoverFx::new(),
@@ -167,7 +166,7 @@ unsafe fn run_impl(image: Arc<CapturedImage>) -> Result<()> {
     Ok(())
 }
 
-/// 按 DPI 重排控件：5 个方形图标按钮横向等距排布（紧凑，不随窗口拉伸）。
+/// 按 DPI 重排控件：4 个方形图标按钮横向等距排布（紧凑，不随窗口拉伸）。
 unsafe fn layout(hwnd: HWND) {
     let Some(d) = data_of(hwnd) else { return };
     let mut cr = RECT::default();
@@ -377,7 +376,7 @@ unsafe extern "system" fn toolbar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             handle_command(hwnd, id);
             LRESULT(0)
         }
-        // 快捷键：Esc 关闭；Ctrl+T/S/C/O 分别对应贴图/保存/复制/OCR
+        // 快捷键：Esc 关闭；Ctrl+T/S/C 分别对应贴图/保存/复制
         WM_KEYDOWN => {
             handle_shortcut(hwnd, wp.0);
             LRESULT(0)
@@ -412,7 +411,7 @@ unsafe extern "system" fn toolbar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
 }
 
 /// 关闭工具条：隐藏后结束其模态消息循环，回到主循环。
-/// 贴图 / 保存 / 复制 / OCR / 关闭五个动作都走这里 —— 工具条是「一次性操作条」。
+/// 贴图 / 保存 / 复制 / 关闭四个动作都走这里 —— 工具条是「一次性操作条」。
 unsafe fn close_bar(hwnd: HWND) {
     if let Some(d) = data_of(hwnd) {
         d.tip.hide();
@@ -485,7 +484,7 @@ unsafe fn draw_icon_frame(
 }
 
 /// 处理工具条快捷键。返回 true 表示已消费该按键。
-/// 映射见 [`SHORTCUTS`]：Esc=关闭，Ctrl+T=贴图，Ctrl+S=保存，Ctrl+C=复制，Ctrl+O=OCR。
+/// 映射见 [`SHORTCUTS`]：Esc=关闭，Ctrl+T=贴图，Ctrl+S=保存，Ctrl+C=复制。
 unsafe fn handle_shortcut(hwnd: HWND, vk: usize) -> bool {
     let (id, need_ctrl) = match vk {
         VK_ESCAPE => return {
@@ -495,7 +494,6 @@ unsafe fn handle_shortcut(hwnd: HWND, vk: usize) -> bool {
         VK_T => (BTN_PIN, true),
         VK_S => (BTN_SAVE, true),
         VK_C => (BTN_COPY, true),
-        VK_O => (BTN_OCR, true),
         _ => return false,
     };
     if need_ctrl && !ctrl_down() {
@@ -511,7 +509,6 @@ fn icon_of(id: usize) -> icons::Icon {
         BTN_PIN => icons::Icon::Pin,
         BTN_SAVE => icons::Icon::Save,
         BTN_COPY => icons::Icon::Copy,
-        BTN_OCR => icons::Icon::Ocr,
         _ => icons::Icon::Close,
     }
 }
@@ -640,13 +637,6 @@ unsafe fn handle_command(hwnd: HWND, id: usize) {
                 Ok(None) => close_bar(hwnd), // 取消保存同样关闭工具条
                 Err(e) => util::error_msgbox(&format!("保存失败：{e}")),
             }
-        }
-        BTN_OCR => {
-            let Some(d) = data_of(hwnd) else { return };
-            // 后台识别 → 直接写剪贴板 → 由主窗口弹 Toast（不弹结果窗口）。
-            // 与贴图右键菜单的「识别文字 (OCR)」共用 ocr::recognize_to_clipboard_async。
-            ocr::recognize_to_clipboard_async(Arc::clone(&d.image.data), d.image.width, d.image.height);
-            close_bar(hwnd);
         }
         _ => {}
     }

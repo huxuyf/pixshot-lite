@@ -1,15 +1,17 @@
-//! PixShot —— 截图 / 贴图 / OCR（Rust + Win32 + Windows.Media.Ocr）
+//! PixShot Lite —— 截图 / 贴图（Rust + Win32）
 //!
 //! 流程：热键（默认 F1）/ 托盘 → 框选 → 从同一帧快照裁剪 → 操作工具栏
-//! （贴图 / 复制 / 保存 / OCR）。贴图窗口置顶显示，支持拖动、滚轮缩放、
-//! 右键菜单（含 OCR）、双击或 Esc 关闭。
+//! （贴图 / 复制 / 保存）。贴图窗口置顶显示，支持拖动、滚轮缩放、
+//! 右键菜单、双击或 Esc 关闭。
+//!
+//! 本仓库是**精简版**：不含 OCR。带 OCR 的增强版见 `huxuyf/pixshot`。
 //!
 //! 模块划分（按职责分层，避免单文件膨胀）：
 //! - `tray`    托盘图标 / 全局热键 / 单实例 / 主窗口消息过程
 //! - `toolbar` 截图操作工具栏
 //! - `overlay` 框选遮罩（唯一一次全屏捕获）
 //! - `pin` / `menu` / `toast`  UI 窗口与自绘控件
-//! - `capture` / `imageio` / `clipboard` / `ocr` 能力层
+//! - `capture` / `imageio` / `clipboard` 能力层
 //! - `theme` / `util`  视觉与 Win32 辅助
 //! - `config` / `diag` / `error`  配置、诊断、错误类型
 //! - `autostart`  开机自启（写入 HKCU 的 Run 注册表项）
@@ -25,7 +27,6 @@ mod error;
 mod icons;
 mod imageio;
 mod menu;
-mod ocr;
 mod overlay;
 mod pin;
 mod svgpath;
@@ -69,7 +70,7 @@ fn main() {
         std::env::args().collect::<Vec<_>>()
     ));
 
-    // 本应用无任何文本输入（框选/贴图/只读 OCR 结果），在首个窗口创建前禁用
+    // 本应用无任何文本输入（框选/贴图均为只读展示），在首个窗口创建前禁用
     // 当前线程 IME，阻止输入法 DLL 注入（实测可省 ~34MB 内存、消除 ~1% 空闲 CPU）
     unsafe {
         use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -88,7 +89,7 @@ fn main() {
     // 配置加载失败/非法项不影响启动（内部一律回退默认值）
     let _ = config::get();
 
-    // --smoke：无 GUI 冒烟测试（全屏截图 → 保存 → OCR），用于验证核心链路
+    // --smoke：无 GUI 冒烟测试（全屏截图 → 保存），用于验证核心链路
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--smoke" || a == "smoke") {
         std::process::exit(run_smoke());
@@ -260,7 +261,7 @@ unsafe fn flow_impl() -> error::Result<()> {
     //    这里不再重新截屏，也不等待遮罩消失（遮罩与工具栏都设了 WDA_EXCLUDEFROMCAPTURE）。
     //    `Selection` 实现了 Drop（关闭红框窗口），故只能 clone 出 Arc 而不能移出字段。
     let image = sel.image.clone();
-    // 3. 操作工具栏：贴图 / 复制 / 保存 / OCR。
+    // 3. 操作工具栏：贴图 / 复制 / 保存。
     //    工具条一旦关闭（点任一图标 / Esc / 关闭按钮），`sel` 在函数返回时析构，
     //    红框随之消失。
     toolbar::run(image)
@@ -276,14 +277,14 @@ fn run_smoke() -> i32 {
         // WIC/WinRT 需要 COM
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
-    println!("PixShot smoke 测试：全屏截图 → 保存图片 → OCR 文字识别");
+    println!("PixShot Lite smoke 测试：全屏截图 → 保存图片");
     println!();
 
     let fmt = config::get().format;
     let out = format!("pixshot_smoke.{}", fmt.ext());
 
     let (vx, vy, vw, vh) = capture::virtual_screen_rect();
-    println!("[1/3] 截取全屏（虚拟屏幕 {vw}×{vh} @ {vx},{vy}）...");
+    println!("[1/2] 截取全屏（虚拟屏幕 {vw}×{vh} @ {vx},{vy}）...");
     let img = match capture::capture_region(vx, vy, vw, vh) {
         Ok(i) => {
             println!("[OK] 截屏成功：{}×{}", i.width, i.height);
@@ -295,7 +296,7 @@ fn run_smoke() -> i32 {
         }
     };
 
-    println!("[2/3] 保存 {out} ...");
+    println!("[2/2] 保存 {out} ...");
     match imageio::save(&out, &img.data, img.width, img.height, fmt) {
         Ok(()) => println!("[OK] 已保存 {out}"),
         Err(e) => {
@@ -303,19 +304,5 @@ fn run_smoke() -> i32 {
             return 1;
         }
     }
-
-    println!("[3/3] OCR 识别（Windows.Media.Ocr）...");
-    match ocr::recognize(&img.data, img.width, img.height) {
-        Ok(text) => {
-            println!("[OK] 识别完成，共 {} 字符：", text.chars().count());
-            println!("────");
-            println!("{text}");
-            println!("────");
-            0
-        }
-        Err(e) => {
-            println!("[失败] OCR 出错：{e}");
-            1
-        }
-    }
+    0
 }

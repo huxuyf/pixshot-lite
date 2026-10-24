@@ -1,7 +1,7 @@
 //! 贴图窗口：置顶无边框显示截图，图像四周带柔和投影。
 //!
 //! 支持：拖动（按住左键）、滚轮缩放（以光标为锚点）、双击关闭、
-//! 右键菜单（复制图像 / 保存（按配置格式）/ OCR / 重置缩放 / 关闭）、Esc 关闭。
+//! 右键菜单（复制图像 / 保存（按配置格式）/ 重置缩放 / 关闭）、Esc 关闭。
 //!
 //! 窗口采用 `WS_EX_LAYERED` + `UpdateLayeredWindow`（逐像素 alpha）：窗口比图像
 //! 四周各多出一圈留白（[`SHADOW_MARGIN_LOGICAL`]），留白内自绘柔和投影，投影之外
@@ -24,7 +24,6 @@ use crate::config;
 use crate::error::{AppError, Result};
 use crate::imageio;
 use crate::menu::{self, Item};
-use crate::ocr;
 use crate::theme;
 use crate::util::{error_msgbox, register_class_w, to_wide};
 use windows::core::PCWSTR;
@@ -562,11 +561,10 @@ unsafe fn context_menu(hwnd: HWND, lp: LPARAM) {
     let Some(data) = data_of(hwnd) else { return };
     let cfg = config::get();
 
-    // 快捷键与工具条保持一致（Ctrl+C 复制 / Ctrl+S 保存 / Ctrl+O OCR）
+    // 快捷键与工具条保持一致（Ctrl+C 复制 / Ctrl+S 保存）
     let items = [
         Item::accel("复制图像", "Ctrl+C"),
         Item::accel(format!("保存为 {}…", cfg.format.label()), "Ctrl+S"),
-        Item::accel("识别文字 (OCR)", "Ctrl+O"),
         Item::sep("重置缩放 (100%)"),
         Item::sep("关闭贴图 (Esc)"),
     ];
@@ -601,11 +599,8 @@ unsafe fn context_menu(hwnd: HWND, lp: LPARAM) {
             Ok(None) => {}
             Err(e) => error_msgbox(&format!("保存失败：{e}")),
         },
-        // OCR：与工具条「复制识别到的文字」完全一致 —— 后台识别 → 写入剪贴板 →
-        // 主窗口弹 Toast，**不弹出结果窗口**（见 ocr::recognize_to_clipboard_async）。
-        2 => ocr::recognize_to_clipboard_async(data.image.clone(), data.img_w, data.img_h),
-        3 => {
-            // 重置缩放：图像左上角保持不动（窗口位置不变，只改尺寸）
+        // 重置缩放：图像左上角保持不动（窗口位置不变，只改尺寸）
+        2 => {
             data.scale = 1.0;
             let (iw, ih) = scaled_size(data, 1.0);
             let m = data.margin;
@@ -623,7 +618,7 @@ unsafe fn context_menu(hwnd: HWND, lp: LPARAM) {
             }
             render(hwnd);
         }
-        4 => {
+        3 => {
             let _ = DestroyWindow(hwnd);
         }
         _ => {}

@@ -2,10 +2,11 @@
 name = "pixshot"
 version = "0.1.0"
 edition = "2021"
-description = "PixPin 风格的 Windows 桌面工具：框选截图 / 贴图置顶 / OCR 文字识别（Rust + Win32 + Windows.Media.Ocr）"
+description = "PixPin 风格的 Windows 桌面工具（精简版）：框选截图 / 贴图置顶（Rust + Win32）"
 
 [dependencies]
-# 与本仓库 screen_recorder 工程相同的 Windows API 绑定（Win32 GUI + WinRT OCR）
+# 与本仓库 screen_recorder 工程相同的 Windows API 绑定（Win32 GUI）。
+# 精简版不含 OCR，故不需要任何 WinRT feature。
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -35,14 +36,6 @@ windows = { version = "0.58", features = [
     "Win32_System_Registry",
     # 单实例互斥体（CreateMutexW 依赖 SECURITY_ATTRIBUTES）
     "Win32_Security",
-    # WinRT（OCR 用）
-    "Foundation",
-    "Foundation_Collections",
-    "Globalization",
-    "Graphics_Imaging",
-    "Media_Ocr",
-    "Security_Cryptography",
-    "Storage_Streams",
 ] }
 
 [profile.release]

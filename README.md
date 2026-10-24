@@ -1,7 +1,11 @@
-# PixShot —— 截图 / 贴图 / OCR（Rust · Windows 桌面工具）
+# PixShot Lite —— 截图 / 贴图（Rust · Windows 桌面工具）
 
-仿 Snipaste 的 Windows 桌面小工具，纯 Rust 实现（Win32 GUI + Windows.Media.Ocr），零非 Rust
+仿 Snipaste 的 Windows 桌面小工具，纯 Rust 实现（Win32 GUI），零非 Rust
 运行时依赖。技术路线沿用本仓库 `screen_recorder` 工程已使用的 `windows` crate 绑定。
+
+> **这是精简版**：只做截图与贴图，**不含 OCR**。需要 OCR 的用增强版
+> [`huxuyf/pixshot`](https://github.com/huxuyf/pixshot)（同一代码基线 + OCR，将来会带
+> 内置高精度引擎，体积也更大）。两条线各自独立更新，公共逻辑的修复两边都要改。
 
 ## 功能
 
@@ -9,11 +13,11 @@
 |------|------|
 | **应用图标** | Fluent 风格自绘图标（蓝紫渐变圆角方形 + 白色取景框四角括号 + 焦点圆点），由 `build.rs` 内置纯 Rust 光栅化器生成多尺寸 .ico（16/24/32/48/64），经 windres 嵌入 exe 资源；托盘运行时 `LoadImage` 从自身模块加载同一图标（DPI 感知小图标尺寸） |
 | **托盘常驻** | 启动后仅常驻任务栏托盘区域（无任何窗口弹出）；**F1 全局热键**（可在配置文件中改为 `Ctrl+Shift+S` 等）或**左键点击托盘**进入截图流程；右键托盘菜单含「开机启动」（可勾选，写入 HKCU 的 Run 键实现登录自启）与「退出」（点击后完全退出）。具备：单实例保护、托盘注册失败重试（5 次）、`TaskbarCreated` 处理（Explorer 重启后自动恢复图标）、`NOTIFYICON_VERSION_4` 回调协议（按 SETVERSION 成败自动分派两种回调布局）、失败可见（日志 + 提示框） |
-| **截图** | 按下热键后**整屏冻结**（显示捕获到的整屏快照，**不做暗化**）→ 十字光标、拖动框选并叠加一圈**红色框线**、Esc 取消（**只保留区域截图**，无活动窗口 / 全屏截图）→ 操作工具栏（**白底黑图标**的紧凑工具条：**贴图 / 保存 / 复制 / OCR / 关闭** 五个**纯图标**按钮，悬停出提示气泡并显示快捷键 Ctrl+T / Ctrl+S / Ctrl+C / Ctrl+O / Esc，点任一按钮后工具栏自动关闭，此时**冻结画面与红框才消失**）；**冻结画面与红框在工具条关闭前一直保留**（鼠标穿透，工具条压在其上），**整个流程只截一次全屏**，后续裁剪都基于同一份快照，多显示器/高 DPI 下选区与结果严格一致。可保存为 **PNG / JPEG / BMP**（系统保存对话框，记住上次目录），或复制为 `CF_DIB` 位图 |
-| **贴图** | 截图以无边框小窗钉在桌面**置顶**显示（Snipaste 式），**图像四周带柔和投影**（窗口用 `WS_EX_LAYERED` + `UpdateLayeredWindow`：比图像四周各多出一圈留白用于自绘投影，投影外完全透明且鼠标穿透）；按住左键拖动、滚轮以光标为锚点缩放（0.05×–8×）、右键菜单（复制图像 Ctrl+C / 保存为当前格式 Ctrl+S / OCR Ctrl+O / 重置缩放 / 关闭，快捷键右对齐显示且在菜单展开时直接可用）、Esc 关闭。100% 缩放走 `StretchDIBits` 直出快路径，其余缩放走离屏合成 + `HALFTONE`（缩小）/ `COLORONCOLOR`（放大） |
-| **OCR** | 调用系统自带 `Windows.Media.Ocr`（WinRT，支持中英文等多语言，无需安装任何 OCR 引擎）。**工具条「复制识别到的文字」与贴图右键菜单「识别文字 (OCR)」走同一条路径**（`ocr::recognize_to_clipboard_async`）：后台识别 → 文字写入剪贴板（`CF_UNICODETEXT`）→ 右下角 Toast「已复制文字到剪贴板」，**两处都不弹出结果窗口**，功能与提示完全一致。识别语言可在配置文件中固定（默认走系统语言 → zh-Hans-CN → en-US → 任意可用语言的回退链） |
+| **截图** | 按下热键后**整屏冻结**（显示捕获到的整屏快照，**不做暗化**）→ 十字光标、拖动框选并叠加一圈**红色框线**、Esc 取消（**只保留区域截图**，无活动窗口 / 全屏截图）→ 操作工具栏（**白底黑图标**的紧凑工具条：**贴图 / 保存 / 复制 / 关闭** 四个**纯图标**按钮，悬停出提示气泡并显示快捷键 Ctrl+T / Ctrl+S / Ctrl+C / Esc，点任一按钮后工具栏自动关闭，此时**冻结画面与红框才消失**）；**冻结画面与红框在工具条关闭前一直保留**（鼠标穿透，工具条压在其上），**整个流程只截一次全屏**，后续裁剪都基于同一份快照，多显示器/高 DPI 下选区与结果严格一致。可保存为 **PNG / JPEG / BMP**（系统保存对话框，记住上次目录），或复制为 `CF_DIB` 位图 |
+| **贴图** | 截图以无边框小窗钉在桌面**置顶**显示（Snipaste 式），**图像四周带柔和投影**（窗口用 `WS_EX_LAYERED` + `UpdateLayeredWindow`：比图像四周各多出一圈留白用于自绘投影，投影外完全透明且鼠标穿透）；按住左键拖动、滚轮以光标为锚点缩放（0.05×–8×）、右键菜单（复制图像 Ctrl+C / 保存为当前格式 Ctrl+S / 重置缩放 / 关闭，快捷键右对齐显示且在菜单展开时直接可用）、Esc 关闭。100% 缩放走 `StretchDIBits` 直出快路径，其余缩放走离屏合成 + `HALFTONE`（缩小）/ `COLORONCOLOR`（放大） |
+| **保存命名** | 默认文件名 `截图_YYYYMMDD_NN.<ext>`：按当天在该目录下已有的序号依次递增（01…99），重启程序后接着当天继续 |
 | **提示与菜单** | 操作反馈使用非模态 Toast（右下角自动消失、点击即关），不再弹系统消息框打断操作；托盘与贴图右键共用同一套自绘 Fluent 菜单（支持多项目 / 分隔线 / 禁用态） |
-| **配置** | `config.ini`（与 `pixshot.exe` 同目录）纯文本配置：热键、保存格式、默认保存目录、OCR 语言、Toast 停留时长；手写解析器，非法值自动回退默认并写诊断日志 |
+| **配置** | `config.ini`（与 `pixshot.exe` 同目录）纯文本配置：热键、保存格式、默认保存目录、Toast 停留时长；手写解析器，非法值自动回退默认并写诊断日志 |
 
 ## 构建与运行
 
@@ -21,7 +25,7 @@
 或 `x86_64-pc-windows-gnu` 工具链均可）。
 
 ```powershell
-cd pixshot
+cd pixshot-lite
 
 # 开发构建
 cargo build
@@ -32,17 +36,19 @@ cargo build --release
 # 运行（GUI：常驻托盘，不弹窗；按 F1 或左键托盘图标开始截图）
 cargo run --release
 
-# 无 GUI 冒烟测试：全屏截图 → 保存 PNG → OCR 识别（验证核心链路）
+# 无 GUI 冒烟测试：全屏截图 → 保存 PNG（验证核心链路）
 cargo run --release -- --smoke
 
-# 单元测试 + 集成测试（53 项，纯逻辑、不触碰桌面）
+# 单元测试 + 集成测试（60 项，纯逻辑、不触碰桌面）
 cargo test
 
 # 本地 CI：check → test → build → release → 体积护栏 → E2E（加 -SkipE2E 跳过最后一步）
 pwsh -File scripts\ci.ps1
 ```
 
-产物：`target\release\pixshot.exe`（单文件，约 2.2 MB，无 DLL 依赖，可直接分发）。
+产物：`target\release\pixshot.exe`（单文件，约 1.6 MB，无 DLL 依赖，可直接分发）。
+文件名与增强版一致，两版可在同一台机器上同时常驻（互斥体名不同）；分发时建议按版本改名，
+例如 `pixshot-lite.exe` / `pixshot-plus.exe`。
 
 ### 图标嵌入与构建工具链
 
@@ -114,16 +120,11 @@ pwsh -File scripts\fix_integrity.ps1
 hotkey   = F1                ; 全局热键，支持 Ctrl / Alt / Shift / Win 组合，如 Ctrl+Shift+S
 format   = png               ; 保存格式：png / jpg / bmp
 save_dir =                   ; 默认保存目录，留空则每次打开对话框时从系统默认位置开始
-ocr_lang =                   ; OCR 语言，留空则自动回退（系统语言 → zh-Hans-CN → en-US → 任意）
 toast_ms = 1600              ; 操作提示的停留毫秒数
 ```
 
 解析器为手写实现（不引入 ini/toml 依赖）：未知键忽略、非法值回退默认值，两类情况都会
 写入诊断日志，不会因配置写坏而启动失败。保存成功后自动记住本次目录（回写 `save_dir`）。
-
-> OCR 需要 Windows 语言包带"文字识别"可选功能（中文/英文系统一般已内置）。
-> 若提示没有可用语言包：设置 → 时间和语言 → 语言和区域 → 添加语言（如"英语(美国)"或
-> "中文(简体)"）→ 语言选项 → 勾选"文字识别"。
 
 ## 操作方式
 
@@ -135,19 +136,17 @@ toast_ms = 1600              ; 操作提示的停留毫秒数
   （转为鼠标穿透，工具条/贴图压在其上），直到点击工具栏任一图标或关闭截图（Esc / 关闭按钮）
   才一起消失、屏幕恢复实时状态；单击（或过小的拖动）不产生选区，
   可继续框选；Esc = 取消。**只支持区域截图**，不提供活动窗口 / 全屏截图
-- **工具栏**：一张**紧凑的白色圆角卡片**（180×44 逻辑像素），只含 **五个纯黑矢量图标按钮**
+- **工具栏**：一张**紧凑的白色圆角卡片**（144×44 逻辑像素），只含 **四个纯黑矢量图标按钮**
   （GDI+ 抗锯齿描边，无锯齿），图标形状取自 **Lucide 图标集**（`pin` / `download` / `copy` /
-  `scan-text` / `x`，24×24 官方路径数据，见 `icons.rs`），从左到右为
-  **贴图 / 保存图像 / 复制并关闭 / 复制识别到的文字 / 关闭**（前四个=贴图、保存、复制、OCR）；
+  `x`，24×24 官方路径数据，见 `icons.rs`），从左到右为
+  **贴图 / 保存图像 / 复制并关闭 / 关闭**；
   鼠标移到图标上会弹出提示气泡，文案形如 **贴图（Ctrl+T）**（括号部分用次级文本色）；按钮到顶部与到底部的留白一致；
-  点任一按钮后工具栏**自动关闭**（五个动作都是"一次性"的）
+  点任一按钮后工具栏**自动关闭**（四个动作都是"一次性"的）
 - **工具栏快捷键**（气泡里也会显示）：**Ctrl+T** 贴图 / **Ctrl+S** 保存图像 /
-  **Ctrl+C** 复制并关闭 / **Ctrl+O** 复制识别到的文字 / **Esc** 关闭（不执行操作）
+  **Ctrl+C** 复制并关闭 / **Esc** 关闭（不执行操作）
 - **贴图右键菜单快捷键**（与工具条一致，条目右侧右对齐显示）：**Ctrl+C** 复制图像 /
-  **Ctrl+S** 保存 / **Ctrl+O** 识别文字；菜单展开时直接按即可触发
-- **OCR**：**工具条「复制识别到的文字」与贴图右键菜单「识别文字 (OCR)」行为完全一致** ——
-  后台识别 → 文字写入剪贴板 → 右下角 Toast「已复制文字到剪贴板」，**都不弹出结果窗口**
-- **贴图窗口**：左键拖动移动；滚轮缩放（以光标为锚点）；**双击左键退出该贴图**；右键菜单含 OCR（同工具条：复制到剪贴板）；Esc 关闭
+  **Ctrl+S** 保存；菜单展开时直接按即可触发
+- **贴图窗口**：左键拖动移动；滚轮缩放（以光标为锚点）；**双击左键退出该贴图**；右键菜单含复制图像 / 保存 / 重置缩放 / 关闭；Esc 关闭
 - **开机启动**：右键托盘图标 → 点「开机启动」切换。默认关闭；启用后菜单项显示为「**√ 开机启动**」，
   并在 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` 下写入 `PixShot`（值为自身 exe 路径，
   无需管理员权限）；再次点击即取消（删除该注册表值）。勾选状态以注册表为准，重启程序后保持一致。
@@ -204,26 +203,49 @@ toast_ms = 1600              ; 操作提示的停留毫秒数
 
 一键采集诊断信息：`pwsh -File scripts\diag_tray_hotkey.ps1`
 
+## 与增强版的关系（两条独立发布线）
+
+| | 精简版 `pixshot-lite`（本仓库） | 增强版 `pixshot` |
+|---|---|---|
+| 功能 | 截图 / 贴图 | 截图 / 贴图 / **OCR** |
+| 依赖 | 仅 `windows`（纯 Win32，不启用任何 WinRT feature） | `windows`（含 WinRT）；接入内置 OCR 引擎后还会带上该引擎与模型 |
+| 体积 | 约 1.6 MB | 约 2.2 MB，并将随内置引擎明显增大 |
+
+两仓库各自独立更新，**没有自动同步**（共同祖先止于拆分点）。公共逻辑（截图、贴图、托盘、
+主题、日志、保存命名等）改动**两边都要做**；需要搬运时用 cherry-pick：
+
+```bash
+# 把增强版里与 OCR 无关的修复挑到本仓库
+git remote add plus git@github.com:huxuyf/pixshot.git
+git fetch plus && git cherry-pick <增强版的提交>
+
+# 反向亦然：在增强版里挑本仓库的提交
+git remote add lite git@github.com:huxuyf/pixshot-lite.git
+git fetch lite && git cherry-pick <本仓库的提交>
+```
+
+涉及 `src/ocr*`、工具条/菜单里的 OCR 项、`config.ini` 的 `ocr_lang` 等改动**不要**搬过来——
+本仓库没有这些代码。另注意工具条按钮 ID 协议：增强版 `4=OCR`，本仓库留空不占位（`5=关闭`）。
+
 ## 项目结构
 
 ```
-pixshot/
-├── Cargo.toml            # windows 0.58 绑定（Win32 + WinRT OCR），无其他依赖
+pixshot-lite/
+├── Cargo.toml            # windows 0.58 绑定（仅 Win32；精简版不启用任何 WinRT feature），无其他依赖
 ├── build.rs             # 应用图标：纯 Rust 光栅化器生成 .ico + windres/rc.exe 嵌入 exe 资源
 ├── src/
 │   ├── main.rs           # 入口：进程级初始化、截图流程编排（含 panic 兜底与重入保护）、--smoke
 │   ├── tray.rs           # 托盘常驻 + 全局热键（RegisterHotKey → 低级钩子回退）+ 单实例互斥
 │   ├── capture.rs        # GDI BitBlt 截屏（CreateDIBSection 直读、虚拟屏幕/多显示器、crop 裁剪）
 │   ├── overlay.rs        # 全屏框选层（整屏冻结、无暗化：分层窗铺满快照 + 红框；确认后即释放整屏快照）
-│   ├── toolbar.rs        # 截图操作工具栏（贴图/保存/复制/OCR/关闭 五个纯图标按钮，owner-draw；任一操作后自动关闭）
-│   ├── icons.rs          # 工具条图标：Lucide（pin/download/copy/scan-text/x）路径数据的 GDI+ 抗锯齿描边自绘，无图片资源
+│   ├── toolbar.rs        # 截图操作工具栏（贴图/保存/复制/关闭 四个纯图标按钮，owner-draw；任一操作后自动关闭）
+│   ├── icons.rs          # 工具条图标：Lucide（pin/download/copy/x）路径数据的 GDI+ 抗锯齿描边自绘，无图片资源
 │   ├── svgpath.rs        # SVG path 展平器：把 Lucide 的 d 字符串解析为折线（纯 Rust，可单测）
 │   ├── tooltip.rs        # 图标悬停提示气泡（自绘卡片，文案含快捷键；替代 comctl32 标准 tooltip）
 │   ├── pin.rs            # 置顶贴图窗口（拖动/滚轮缩放/自绘四周投影/离屏合成/右键菜单，像素级完整呈现）
-│   ├── ocr.rs            # Windows.Media.Ocr 封装（语言回退链、超尺寸降采样、识别→剪贴板→Toast 共用路径）
-│   ├── clipboard.rs      # Win32 剪贴板：CF_DIB 图像 / CF_UNICODETEXT 文本（RAII 守卫）
-│   ├── imageio.rs        # WIC 编码 PNG/JPEG/BMP + 系统保存对话框（记住上次目录）
-│   ├── config.rs         # config.ini 读写与解析（热键/格式/目录/OCR 语言/Toast 时长）
+│   ├── clipboard.rs      # Win32 剪贴板：CF_DIB 图像（RAII 守卫）
+│   ├── imageio.rs        # WIC 编码 PNG/JPEG/BMP + 系统保存对话框（记住上次目录、当日序号命名）
+│   ├── config.rs         # config.ini 读写与解析（热键/格式/目录/Toast 时长）
 │   ├── menu.rs           # 自绘 Fluent 弹出菜单（托盘与贴图共用，支持分隔线与禁用态）
 │   ├── toast.rs          # 非模态 Toast 提示（替代 MessageBoxW，不打断操作）
 │   ├── theme.rs          # Fluent 视觉基建：深/浅色板、系统主题跟随、DPI 字体、DWM 特效
@@ -235,7 +257,7 @@ pixshot/
 │   └── icon_geometry.rs  # 图标几何集成测试（14 项：端点/对称性/越界/常量约束）
 ├── scripts/
 │   ├── ci.ps1                # 本地 CI 流水线：check→test→build→release→体积护栏→E2E
-│   ├── gui_e2e_msg_test.ps1  # GUI 端到端（消息驱动版，自带 OCR 文字靶标）
+│   ├── gui_e2e_msg_test.ps1  # GUI 端到端（消息驱动版）
 │   ├── gui_e2e_test.ps1      # GUI 端到端（物理鼠标/键盘版）
 │   ├── diag_tray_hotkey.ps1  # 托盘/热键诊断采集
 │   ├── fix_integrity.ps1     # 修复目录完整性标签（托盘注册失败错误 5 的根因）
@@ -259,16 +281,16 @@ pixshot/
 | 脚本 | 驱动方式 | 适用环境 | 额外覆盖 |
 |------|----------|----------|----------|
 | `scripts/gui_e2e_test.ps1` | 真实鼠标/键盘注入 | 用户自己的终端（需可注入输入） | 贴图拖动、右键菜单、保存对话框 |
-| `scripts/gui_e2e_msg_test.ps1` | `SendMessage/PostMessage` 直接驱动窗口过程 | 任意环境（含禁止输入注入的受限沙箱） | 自带确定性 OCR 文字靶标 |
+| `scripts/gui_e2e_msg_test.ps1` | `SendMessage/PostMessage` 直接驱动窗口过程 | 任意环境（含禁止输入注入的受限沙箱） | 工具条结构/提示气泡/复制/贴图/Esc |
 
 两个脚本各自维护一份**独立的断言清单**，逐项打印 `PASS/FAIL`，退出码 0 表示全过：
-消息驱动版 **21 项**、物理驱动版 **20 项**。覆盖的能力点如下（同一能力点可能对应多条
-断言，例如「置顶」同时校验扩展样式与实际 `WS_EX_TOPMOST` 位）：
+消息驱动版 **18 项**、物理驱动版 **19 项**（含一对互斥分支）。覆盖的能力点如下（同一能力点
+可能对应多条断言，例如「置顶」同时校验扩展样式与实际 `WS_EX_TOPMOST` 位）：
 
 1. 启动 → **托盘常驻（无窗口弹出）**
 2. **热键路径（WM_HOTKEY）触发截图流程** → 框选层出现 → 框选 → 工具栏弹出
-3. 工具栏只含 **五个纯图标按钮（贴图/保存/复制/OCR/关闭）**：无标签/状态等其它文字，
-   窗口文本即**悬停提示文案**（贴图/保存图像/复制并关闭/复制识别到的文字/关闭），
+3. 工具栏只含 **四个纯图标按钮（贴图/保存/复制/关闭）**：无标签/状态等其它文字，
+   窗口文本即**悬停提示文案**（贴图/保存图像/复制并关闭/关闭），
    且按钮**到顶部与到底部的留白一致**；点「✕ 关闭」或按 **Esc** 均可不执行操作直接关闭
 4. **悬停提示气泡**：「延时后弹出 + 文案为『贴图（Ctrl+T）』形式 + 移开后收起」——
    消息驱动版向按钮发 `WM_MOUSEMOVE`/`WM_MOUSELEAVE` 验证，
@@ -277,8 +299,7 @@ pixshot/
    **Ctrl+T** → 创建贴图窗口且工具条关闭
 6. **贴图菜单快捷键**（物理驱动版）：展开贴图右键菜单后按 **Ctrl+C** → 菜单收起且剪贴板含 CF_DIB
 7. 「复制」→ 剪贴板含 **CF_DIB 位图**，且**工具栏自动关闭**
-8. **OCR（两条入口行为一致）**：工具条「复制识别到的文字」与**贴图右键菜单「识别文字 (OCR)」**
-   → 文字进入剪贴板、**都不弹结果窗口**（中/英/数字与靶标一致）
+8. **贴图右键菜单「重置缩放 (100%)」**（物理驱动版）：滚轮放大后点该项 → 贴图尺寸复原
 9. 「贴图」→ 工具栏关闭；贴图窗口创建于**原截图位置**（图像内容像素位置严格不变，
    窗口四周外扩一圈投影留白）、初始 100% 缩放、**WS_EX_TOPMOST 置顶**
 10. 贴图右键菜单 → **在菜单之外（贴图上）左键单击即关闭菜单**（回归：曾因菜单只判"命中项"而残留）
@@ -292,7 +313,7 @@ pixshot/
 用法（约 30~60 秒，运行期间接管鼠标键盘/桌面窗口，请勿操作）：
 
 ```powershell
-cd pixshot
+cd pixshot-lite
 pwsh -File scripts\ci.ps1                                 # 推荐：CI 流水线（含下列 E2E）
 pwsh -File scripts\ci.ps1 -SkipE2E                        # 只跑静态检查与构建
 pwsh -File scripts\gui_e2e_msg_test.ps1                   # 消息驱动版（默认 release exe）
@@ -301,13 +322,10 @@ pwsh -File scripts\gui_e2e_test.ps1 -Exe target\release\pixshot.exe
 ```
 
 输出：PASS/FAIL 清单 + 退出码（0=全部通过）；详细记录与 `pin_visible.png`
-（贴图置顶显示存档）见 `e2e_artifacts\`。消息驱动版还会在选区内自绘一个
-确定性文字窗口（"PixShot OCR E2E / 识别测试文本 ABC 12345"）供 OCR 断言，
-不依赖桌面上恰好有文字。
+（贴图置顶显示存档）见 `e2e_artifacts\`。消息驱动版会自动在选区内铺一个白底窗口，
+让每次截图的内容稳定可预期，不依赖桌面上恰好有什么。
 
-> 测试结果示例（本仓库开发机，Windows 11 26300，125% DPI）：
-> `[消息驱动版] 测试结束：21 项通过，0 项失败`，OCR 识别输出
-> `PixShot OCR E2E 识 别 测 试 文 本 ABC 12345`。
+> 测试结果示例（开发机，Windows 11 26300，125% DPI）：`==== 测试结束：18 项通过，0 项失败 ====`。
 >
 > 说明：物理驱动版依赖向系统注入鼠标/键盘输入，在禁止输入注入的受限宿主
 > （如某些自动化沙箱）中会被拦截——此时请使用消息驱动版。
@@ -346,7 +364,7 @@ pwsh -File scripts\gui_e2e_test.ps1 -Exe target\release\pixshot.exe
   `UpdateLayeredWindow` 逐像素 alpha），不用 `CS_DROPSHADOW`——后者由 DWM 绘制且
   只在窗口处于活动状态时出现，而贴图作为常驻置顶窗口绝大多数时间非活动，实测无阴影。
 - **截屏管线**：整个截图流程**只做一次全屏 `BitBlt`**，结果以 `Arc<[u8]>`（BGRA、自上而下）
-  持有；选区裁剪、贴图、OCR 全部基于同一份快照的切片，避免「截一次 → 等待 →
+  持有；选区裁剪、贴图、保存全部基于同一份快照的切片，避免「截一次 → 等待 →
   再截一次」带来的闪烁与选区漂移。位图用 `CreateDIBSection` 直接作为 `BitBlt` 目标，
   像素落在自持内存里（省掉一次位图创建 + `GetDIBits` 全量拷贝），alpha 在捕获阶段统一置 255。
   （录屏用的 DXGI 重复在 `screen_recorder` 工程中。）
@@ -372,20 +390,15 @@ pwsh -File scripts\gui_e2e_test.ps1 -Exe target\release\pixshot.exe
   `WS_EX_TRANSPARENT` 转为鼠标穿透，不再挡桌面操作），窗口所有权移交给 `overlay::Selection`，
   直到用户点击工具栏任一图标或关闭截图时随 `Selection` 析构才拆窗、释放 GDI 资源
   （拆窗时抑制 `WM_DESTROY` 里的 `PostQuitMessage`，否则会让主消息循环误退出）。
-- **并发与生命周期**：OCR 后台线程识别完成后把文字写入剪贴板，再以
-  `PostMessage(WM_APP_OCR_DONE)` 通知主窗口弹 Toast（工具条与贴图右键共用同一条路径，
-  两处行为必然一致）；结果码以 `WPARAM` 传递，不使用跨线程共享槽，避免悬垂引用。
-  剪贴板用 RAII 守卫，任何提前 return 都会
-  `CloseClipboard()`；截图流程用 `BusyGuard`（`Drop` 自动复位）防重入，并在
+- **并发与生命周期**：截图流程用 `BusyGuard`（`Drop` 自动复位）防重入，并在
   `extern "system"` 边界内 `catch_unwind`，panic 会写入诊断日志而不是静默消失。
+  剪贴板用 RAII 守卫，任何提前 return 都会 `CloseClipboard()`。
 - **菜单与提示**：托盘右键与贴图右键共用 `menu.rs` 一套自绘 Fluent 菜单
   （`SetCapture` + `GWLP_USERDATA`，支持多项目/分隔线/禁用态）。不用
   `TrackPopupMenuEx`：它要求宿主能成为前台窗口，而托盘宿主是隐藏窗口，实测静默失败。
   操作反馈统一走 `toast.rs` 的非模态 Toast，不再用 `MessageBoxW` 打断操作流。
 - **配置**：`config.ini` 由手写解析器读取（零依赖），非法值回退默认并记日志，
   配置损坏不会导致启动失败。
-- **OCR**：`Windows.Media.Ocr` 系统自带、离线、开箱即用（回退链：用户语言 → zh-Hans-CN →
-  en-US → 任意可用语言），超过 `MaxImageDimension` 自动等比降采样。
 - **PNG**：WIC 编码（`IWICImagingFactory`），无第三方图像库。
 - **DPI**：进程级 Per-Monitor-V2 感知，所有坐标/截图均为物理像素；各窗口布局按
   `GetDpiForWindow` 换算并响应 `WM_DPICHANGED`（跨不同缩放率显示器拖动时不会错位），
@@ -406,7 +419,7 @@ pwsh -File scripts\gui_e2e_test.ps1 -Exe target\release\pixshot.exe
 
 | 指标 | 改造前基线 | Fluent 版实测 | 预算 | 判定 |
 |---|---|---|---|---|
-| EXE 体积 | 1.97 MB | **2.17 MB（+10.2%，含嵌入图标资源、托盘/热键加固、配置与自绘菜单）** | ≤ +20%（≤2.37 MB） | ✓ |
+| EXE 体积 | 1.97 MB | **1.58 MB**（精简版：去掉 OCR 后连 WinRT 绑定也不再链接） | ≤ 2.0 MB | ✓ |
 | 冷启动（→托盘就绪） | 63–78 ms | **78–141 ms**（含测量轮询粒度 ~60ms） | ≤ 300 ms | ✓ |
 | 稳态内存（托盘常驻） | 50.6–58.6 MB | **10.29 MB** | ≤ 50 MB | ✓ |
 | 稳态内存（全屏贴图） | 72.38 MB | **27.98 MB** | ≤ 50 MB | ✓ |
@@ -416,12 +429,15 @@ pwsh -File scripts\gui_e2e_test.ps1 -Exe target\release\pixshot.exe
 （实测脚本：`scripts\measure_baseline.ps1` → `perf_baseline.txt`；
 视觉像素级验证：`scripts\verify_fluent.ps1` → `fluent_verify.txt`。
 **体积回归护栏**已固化进 CI：`scripts\ci.ps1` 在 release 构建后断言
-`pixshot.exe ≤ 2.6 MB`，超出即失败并提示检查新增依赖/未裁剪的 crate feature。）
+`pixshot.exe ≤ 2.0 MB`，超出即失败并提示检查新增依赖/未裁剪的 crate feature。
+冷启动/内存/CPU 三行的实测值来自含 OCR 的增强版同期测量，去掉 OCR 后只会更轻。）
 
 ## 已知限制
 
-- 仅支持 Windows（任务要求；GDI/WinRT/WIC 均为 Windows API）
-- OCR 语言取决于系统语言包；无可用语言包时给出中文引导提示
+- 仅支持 Windows（GDI/WIC 均为 Windows API）
+- 本版**不含 OCR**（精简版）；需要识别文字请用增强版 [`huxuyf/pixshot`](https://github.com/huxuyf/pixshot)
+- 两版可同时常驻（单实例互斥体名不同），但默认热键都是 **F1**：同时运行时会互相抢占，
+  其中一个会自动回退到低级钩子兜底。需要并用请给其中一个改 `config.ini` 的 `hotkey`
 - 多显示器：框选/贴图坐标基于虚拟屏幕，支持负坐标副屏；贴图初始缩放以主屏 85% 为上限
 - 贴图尺寸调整仅支持滚轮缩放（不提供边缘拖拽调整——为保图像像素级完整，
   窗口不再使用 WS_THICKFRAME，见设计说明）
@@ -430,4 +446,4 @@ pwsh -File scripts\gui_e2e_test.ps1 -Exe target\release\pixshot.exe
 - 低级键盘钩子兜底模式（`PIXSHOT_FORCE_HOOK=1` 或 `RegisterHotKey` 失败时）有固有风险：
   回调超时会被系统静默摘除，部分安全软件会拦截钩子安装。默认路径不依赖钩子
 - 单实例保护为「第二个实例直接退出并提示」，不做「唤起已有实例的截图」（无 IPC 通道）
-- 发布的 exe 未签名，分发到其他机器会遇到 Windows 安全警告——完整解决方案见 [SIGNING.md](SIGNING.md)（验证/解除锁定/SmartScreen/代码签名全流程）
+- 发布的 exe 未签名，分发到其他机器会遇到 Windows 安全警告（SmartScreen「仍要运行」可放行）

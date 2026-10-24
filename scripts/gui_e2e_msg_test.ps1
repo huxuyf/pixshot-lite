@@ -6,10 +6,9 @@ SendMessage/PostMessage 直接驱动各窗口的窗口过程；窗口查找采�
 EnumWindows（按 PID + 类名），不依赖 FindWindowW。
 
   消息驱动框选截图 → 复制图像（剪贴板校验）→ 贴图置顶（位置/缩放/Esc 关闭验证）
-  → OCR（结果窗口文本 + 复制文本剪贴板比对）
 
 优点：不依赖物理输入注入，可在受限宿主（禁止 SetCursorPos/mouse_event 的沙箱）中运行，
-同样逐条执行应用真实的窗口过程、截屏、贴图、OCR 与剪贴板逻辑。
+同样逐条执行应用真实的窗口过程、截屏、贴图与剪贴板逻辑。
 未覆盖（需物理输入，请用 gui_e2e_test.ps1）：贴图拖动、右键菜单、保存对话框。
 
 用法：
@@ -167,41 +166,6 @@ function Find-ChildById([IntPtr]$Parent, [int]$Id) {
     }
     [IntPtr]::Zero
 }
-function Get-ClipText {
-    for ($i = 0; $i -lt 10; $i++) {
-        if ([W]::OpenClipboard([IntPtr]::Zero)) {
-            $h = [IntPtr]::Zero          # 预置，供 finally 安全引用
-            try {
-                if (-not [W]::IsClipboardFormatAvailable(13)) { return '' }
-                $h = [W]::GetClipboardData(13)
-                if ($h -eq [IntPtr]::Zero) { return '' }
-                $p = [W]::GlobalLock($h)
-                if ($p -eq [IntPtr]::Zero) { return '' }
-                $len = 0
-                while ($len -lt 200000 -and [Runtime.InteropServices.Marshal]::ReadInt16($p, $len * 2) -ne 0) { $len++ }
-                # 必须 return，否则 for 会继续跑满 10 轮，函数返回 11 个元素的数组。
-                return [Runtime.InteropServices.Marshal]::PtrToStringUni($p, $len)
-            } finally {
-                [void][W]::GlobalUnlock($h)
-                [void][W]::CloseClipboard()
-            }
-        }
-        Start-Sleep -Milliseconds 40
-    }
-    return ''
-}
-# 等待剪贴板出现文本（OCR 完成判定；CF_UNICODETEXT = 13）。
-# NotEqual 用于排除点击前已有的旧文本，确保读到的是本次写入的内容。
-function Wait-ClipText([int]$TimeoutMs = 25000, [string]$NotEqual = '') {
-    $deadline = [Environment]::TickCount + $TimeoutMs
-    while ($true) {
-        $t = Get-ClipText
-        if ($t -and $t.Trim().Length -gt 0 -and $t -ne $NotEqual) { return $t }
-        if ([Environment]::TickCount -ge $deadline) { return '' }
-        [void][System.Windows.Forms.Application]::DoEvents()
-        Start-Sleep -Milliseconds 200
-    }
-}
 function Test-ClipDib {
     for ($i = 0; $i -lt 10; $i++) {
         if ([W]::OpenClipboard([IntPtr]::Zero)) {
@@ -229,7 +193,7 @@ function Check([string]$Name, $Ok, [string]$Detail = '') {
 }
 
 Write-Host ''
-Write-Host '==== PixShot E2E（消息驱动版 v3）：工具条结构 -> 复制/OCR/贴图 均关闭工具条 ===='
+Write-Host '==== PixShot Lite E2E（消息驱动版 v3）：工具条结构 -> 复制/贴图 均关闭工具条 ===='
 Write-Host ''
 
 # 框选区域（虚拟屏幕坐标）
@@ -237,18 +201,17 @@ $SelX = 300; $SelY = 300; $SelW = 600; $SelH = 400
 
 $proc = $null
 try {
-    # ── 0. 文字靶标窗口（为 OCR 提供确定性内容，完全位于选区内）──
+    # ── 0. 靶标窗口（纯白，精确覆盖选区）──
     $form = New-Object System.Windows.Forms.Form
     $form.StartPosition = 'Manual'
-    # 靶标窗口精确覆盖框选区域：否则选区边缘会露出桌面/其它窗口，
-    # 混入无关文字干扰 OCR 断言。
+    # 靶标窗口精确覆盖框选区域：让截到的内容稳定可预期（不受桌面上恰好有什么影响）。
     $form.Location = New-Object System.Drawing.Point($SelX, $SelY)
     $form.Size = New-Object System.Drawing.Size($SelW, $SelH)
     $form.FormBorderStyle = 'None'
     $form.BackColor = [System.Drawing.Color]::White
     $form.TopMost = $true
     $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text = "PixShot OCR E2E`n识别测试文本 ABC 12345"
+    $lbl.Text = "PixShot Lite E2E"
     $lbl.Font = New-Object System.Drawing.Font('Microsoft YaHei', 22, [System.Drawing.FontStyle]::Bold)
     $lbl.ForeColor = [System.Drawing.Color]::Black
     $lbl.AutoSize = $false
@@ -257,7 +220,7 @@ try {
     $form.Controls.Add($lbl)
     $form.Show()
     for ($i = 0; $i -lt 15; $i++) { [void][System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 50 }
-    Write-Host '  [靶标] 已在选区内显示确定性文字窗口（PixShot OCR E2E / 识别测试文本 ABC 12345）'
+    Write-Host '  [靶标] 已在选区内显示白底窗口'
 
     # ── 启动一次；后续每个场景各自触发一次全新截图（因为每个操作都会关闭工具条）──
     $proc = Start-Process -FilePath $Exe -PassThru
@@ -292,7 +255,7 @@ try {
         # 因此每次都用工具条几何校验选区，不符则关掉重来（最多 3 次）。
         for ($try = 1; $try -le 3; $try++) {
             # 先把靶标窗口重新置顶：其它置顶浮窗（编辑器/取色器等）可能盖住它，
-            # 导致 OCR 读到的是背景内容而不是靶标文字。
+            # 导致截到的内容与预期不一致。
             $form.TopMost = $false; $form.TopMost = $true
             [void][System.Windows.Forms.Application]::DoEvents()
             Start-Sleep -Milliseconds 150
@@ -329,15 +292,15 @@ try {
     if ($tb0 -eq [IntPtr]::Zero) { throw '截图流程未走通（遮罩或工具条未出现）' }
     Write-Host ("  [操作] 消息驱动框选 ({0},{1}) {2}x{3}" -f $SelX, $SelY, $SelW, $SelH)
 
-    # ── 需求 1/4：工具条为「纯图标」按钮，从左到右：贴图/保存/复制/OCR/关闭 ──
-    # 控件 ID 保持稳定：1=贴图 2=复制 3=保存 4=OCR 5=关闭（E2E 按 ID 查找，与图标顺序无关）
+    # ── 需求 1/4：工具条为「纯图标」按钮，从左到右：贴图/保存/复制/关闭 ──
+    # 控件 ID：1=贴图 2=复制 3=保存 5=关闭（E2E 按 ID 查找，与图标顺序无关；
+    # 4 是精简版已移除的 OCR 按钮，留空不占位）。
     $btnPin  = Find-ChildById $tb0 1     # BTN_PIN   = 1
     $btnCopy = Find-ChildById $tb0 2     # BTN_COPY  = 2
     $btnSave = Find-ChildById $tb0 3     # BTN_SAVE  = 3
-    $btnOcr  = Find-ChildById $tb0 4     # BTN_OCR   = 4
     $btnClose= Find-ChildById $tb0 5     # BTN_CLOSE = 5
     # 窗口内从左到右的实际顺序 = 需求顺序
-    $btnRects = @($btnPin, $btnSave, $btnCopy, $btnOcr, $btnClose) | ForEach-Object { Get-Rect $_ }
+    $btnRects = @($btnPin, $btnSave, $btnCopy, $btnClose) | ForEach-Object { Get-Rect $_ }
     $tbR = Get-Rect $tb0
     $layoutOk = $true
     for ($i = 0; $i -lt $btnRects.Count; $i++) {
@@ -351,15 +314,15 @@ try {
         # 按钮到顶部与到底部的距离必须一致（需求），允许 1px 取整误差
         if ([Math]::Abs(($r.T - $tbR.T) - ($tbR.B - $r.B)) -gt 1) { $layoutOk = $false }
     }
-    Check '工具条含 贴图/保存/复制/OCR/关闭 五个图标按钮（排布正确、上下留白一致）' `
-        ($btnPin -ne [IntPtr]::Zero -and $btnCopy -ne [IntPtr]::Zero -and $btnSave -ne [IntPtr]::Zero -and $btnOcr -ne [IntPtr]::Zero -and $btnClose -ne [IntPtr]::Zero -and $layoutOk) `
+    Check '工具条含 贴图/保存/复制/关闭 四个图标按钮（排布正确、上下留白一致）' `
+        ($btnPin -ne [IntPtr]::Zero -and $btnCopy -ne [IntPtr]::Zero -and $btnSave -ne [IntPtr]::Zero -and $btnClose -ne [IntPtr]::Zero -and $layoutOk) `
         ("按钮宽 {0}px、起点 x={1}、上留白 {2}px/下留白 {3}px" -f ($btnRects[0].R - $btnRects[0].L), $btnRects[0].L, ($btnRects[0].T - $tbR.T), ($tbR.B - $btnRects[0].B))
     $statics = @(Get-StaticTexts $tb0)
     Check '工具条无标签/状态文本（按钮为纯图标）' ($statics.Count -eq 0) ("STATIC 子控件数：{0}" -f $statics.Count)
     # 悬停提示文案即按钮窗口文本（`src/toolbar.rs` 的 TIP_TEXTS），按窗口顺序核对
-    $tips = @($btnPin, $btnSave, $btnCopy, $btnOcr, $btnClose) | ForEach-Object { Get-ControlText $_ }
-    Check '五个图标按钮的悬停提示文案正确' `
-        (($tips -join '|') -eq '贴图|保存图像|复制并关闭|复制识别到的文字|关闭') ("实际：{0}" -f ($tips -join ' / '))
+    $tips = @($btnPin, $btnSave, $btnCopy, $btnClose) | ForEach-Object { Get-ControlText $_ }
+    Check '四个图标按钮的悬停提示文案正确' `
+        (($tips -join '|') -eq '贴图|保存图像|复制并关闭|关闭') ("实际：{0}" -f ($tips -join ' / '))
     # ── 悬停提示：向「复制」按钮发 WM_MOUSEMOVE，延时后应弹出 PixShotTip 气泡 ──
     # 气泡自绘（非 comctl32），文案同步写入窗口标题（src/tooltip.rs SetWindowTextW），便于核对。
     [void][W]::SendMessageW($btnCopy, $WM_MOUSEMOVE, [IntPtr]::Zero, (LP 5 5))
@@ -405,24 +368,6 @@ try {
     Start-Sleep -Milliseconds 500
     Check '「复制」写入剪贴板（CF_DIB 位图）' (Test-ClipDib)
     Check '「复制」后工具条已关闭' (Wait-WindowGone $pid0 'PixShotToolbar')
-
-    # ── 需求 2：点「OCR 识别」→ 不弹窗口，文字进剪贴板并关闭工具条 ──
-    $tb1 = Invoke-Capture
-    if ($tb1 -eq [IntPtr]::Zero) { throw '第二次截图未出现工具条' }
-    $before = Get-ClipText
-    $btnOcr1 = Find-ChildById $tb1 4
-    if ($btnOcr1 -eq [IntPtr]::Zero) { throw '第二次工具条未找到 OCR 按钮' }
-    [void][W]::SendMessageW($btnOcr1, $BM_CLICK, [IntPtr]::Zero, [IntPtr]::Zero)
-    Check '「OCR 识别」后工具条已关闭' (Wait-WindowGone $pid0 'PixShotToolbar')
-    Start-Sleep -Milliseconds 300
-    Check '「OCR 识别」不再弹出结果窗口' ((Find-WindowByEnum $pid0 'PixShotOcrResult') -eq [IntPtr]::Zero)
-    $ocrText = Wait-ClipText 25000 $before
-    $hit = ($ocrText -match '(?i)pixshot|识别测试|测试文本|ABC|12345|OCR')
-    Check '「OCR 识别」把文字复制到剪贴板' ($ocrText.Trim().Length -gt 0 -and $hit) ("共 $($ocrText.Length) 字符")
-    if ($ocrText) {
-        $prev = if ($ocrText.Length -gt 200) { $ocrText.Substring(0, 200) + '...' } else { $ocrText }
-        Write-Host ("  [OCR 文本预览] {0}" -f (($prev -replace "[\r\n]+", " | ")))
-    }
 
     # ── 需求 3：点「贴图」→ 建贴图窗口并关闭工具条；附带验证选区/置顶/缩放/Esc ──
     $tb2 = Invoke-Capture

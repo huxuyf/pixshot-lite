@@ -59,8 +59,6 @@ pub struct Config {
     pub format: SaveFormat,
     /// 上次保存目录（下次对话框默认打开它）。
     pub save_dir: Option<String>,
-    /// 首选 OCR 语言标签（如 `zh-Hans-CN`）；空 = 按系统语言自动回退。
-    pub ocr_lang: Option<String>,
     /// 轻提示停留时长（毫秒）。
     pub toast_ms: u32,
 }
@@ -71,7 +69,6 @@ impl Default for Config {
             hotkey: "F1".into(),
             format: SaveFormat::Png,
             save_dir: None,
-            ocr_lang: None,
             toast_ms: 1600,
         }
     }
@@ -183,8 +180,6 @@ pub fn render(c: &Config) -> String {
     s.push_str(&format!("format = {}\n\n", c.format.ext()));
     s.push_str("# 上次保存目录（程序自动维护，也可手工指定）\n");
     s.push_str(&format!("save_dir = {}\n\n", c.save_dir.as_deref().unwrap_or("")));
-    s.push_str("# OCR 首选语言（留空则按系统语言自动回退），例：zh-Hans-CN\n");
-    s.push_str(&format!("ocr_lang = {}\n\n", c.ocr_lang.as_deref().unwrap_or("")));
     s.push_str("# 成功提示停留时长（毫秒，300-10000）\n");
     s.push_str(&format!("toast_ms = {}\n", c.toast_ms));
     s
@@ -230,11 +225,6 @@ pub fn parse_detailed(text: &str) -> (Config, Vec<String>) {
             "save_dir" => {
                 if !val.is_empty() {
                     c.save_dir = Some(val.to_string());
-                }
-            }
-            "ocr_lang" => {
-                if !val.is_empty() {
-                    c.ocr_lang = Some(val.to_string());
                 }
             }
             "toast_ms" => {
@@ -358,13 +348,11 @@ mod tests {
              hotkey = Ctrl+Alt+F5\n\
              format = jpg\n\
              save_dir = D:\\shots\n\
-             ocr_lang = zh-Hans-CN\n\
              toast_ms = 900\n",
         );
         assert_eq!(c.hotkey, "Ctrl+Alt+F5");
         assert_eq!(c.format, SaveFormat::Jpeg);
         assert_eq!(c.save_dir.as_deref(), Some(r"D:\shots"));
-        assert_eq!(c.ocr_lang.as_deref(), Some("zh-Hans-CN"));
         assert_eq!(c.toast_ms, 900);
     }
 
@@ -375,13 +363,11 @@ mod tests {
         c.hotkey = "Ctrl+Shift+A".into();
         c.format = SaveFormat::Bmp;
         c.save_dir = Some(r"C:\temp".into());
-        c.ocr_lang = Some("en-US".into());
         c.toast_ms = 2000;
         let back = parse(&render(&c));
         assert_eq!(back.hotkey, c.hotkey);
         assert_eq!(back.format, c.format);
         assert_eq!(back.save_dir, c.save_dir);
-        assert_eq!(back.ocr_lang, c.ocr_lang);
         assert_eq!(back.toast_ms, c.toast_ms);
     }
 

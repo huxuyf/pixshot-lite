@@ -530,11 +530,10 @@ mod preview {
                 None,
                 windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
             );
-            // 与贴图右键菜单同构：5 项，第 2 项处于悬停态
+            // 与贴图右键菜单同构：4 项，第 2 项处于悬停态
             let items = vec![
                 Item::accel("复制图像", "Ctrl+C"),
                 Item::accel("保存为 PNG…", "Ctrl+S"),
-                Item::accel("识别文字 (OCR)", "Ctrl+O"),
                 Item::sep("重置缩放 (100%)"),
                 Item::sep("关闭贴图 (Esc)"),
             ];
@@ -544,7 +543,7 @@ mod preview {
             let n_items = items.len() as i32;
             let d = Data {
                 items,
-                hover: Some(2),
+                hover: Some(1),
                 chosen: None,
                 item_h,
                 sep_h,

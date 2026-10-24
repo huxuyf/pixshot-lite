@@ -1,4 +1,4 @@
-//! Win32 剪贴板：图像（CF_DIB）与文本（CF_UNICODETEXT）。
+//! Win32 剪贴板：图像（CF_DIB）。
 //!
 //! 资源收尾是本模块的关键：剪贴板是**全系统共享**的独占资源 ——
 //! 一旦 `OpenClipboard` 之后没有 `CloseClipboard`，在进程退出前
@@ -14,7 +14,7 @@ use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
 };
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
+use windows::Win32::System::Ole::CF_DIB;
 
 /// 剪贴板打开守卫：`Drop` 时无条件关闭。
 struct ClipboardGuard;
@@ -92,36 +92,6 @@ pub fn copy_image(bgra_top_down: &[u8], w: i32, h: i32) -> Result<()> {
         let _ = GlobalUnlock(hmem);
         // 内存块所有权移交给剪贴板：成功后不可再释放；失败时必须释放，否则泄漏整幅图像
         if let Err(e) = SetClipboardData(CF_DIB.0 as u32, HANDLE(hmem.0)) {
-            let _ = GlobalFree(hmem);
-            return Err(e.into());
-        }
-    }
-    Ok(())
-}
-
-/// 复制文本到剪贴板（CF_UNICODETEXT）。
-pub fn copy_text(s: &str) -> Result<()> {
-    let mut wide: Vec<u16> = s.encode_utf16().collect();
-    wide.push(0);
-    let bytes = wide.len() * 2;
-
-    let _guard = ClipboardGuard::open()?;
-
-    unsafe {
-        let _ = EmptyClipboard();
-
-        let hmem = match GlobalAlloc(GMEM_MOVEABLE, bytes) {
-            Ok(h) => h,
-            Err(e) => return Err(e.into()),
-        };
-        let p = GlobalLock(hmem);
-        if p.is_null() {
-            let _ = GlobalFree(hmem);
-            return Err(AppError::Config("GlobalLock 失败".into()));
-        }
-        std::ptr::copy_nonoverlapping(wide.as_ptr(), p as *mut u16, wide.len());
-        let _ = GlobalUnlock(hmem);
-        if let Err(e) = SetClipboardData(CF_UNICODETEXT.0 as u32, HANDLE(hmem.0)) {
             let _ = GlobalFree(hmem);
             return Err(e.into());
         }

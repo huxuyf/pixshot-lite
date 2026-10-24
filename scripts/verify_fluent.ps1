@@ -105,7 +105,7 @@ try {
     $form.Show(); Pump 600
     Log "品红靶标已上屏 (250,250)-(950,750)"
 
-    # ── B. 启动（托盘驻留）→ F1 触发 → 拖拽 → 工具栏 → OCR 窗口 → 贴图 ──
+    # ── B. 启动（托盘驻留）→ F1 触发 → 拖拽 → 工具栏 → 贴图 ──
     $proc = Start-Process -FilePath (Join-Path $PSScriptRoot '..\target\release\pixshot.exe') -PassThru
     $pid0 = $proc.Id
     $mainH = Wait-Enum $pid0 'PixShotMain'
@@ -127,13 +127,6 @@ try {
     $tb = Wait-Enum $pid0 'PixShotToolbar'
     if ($tb -eq [IntPtr]::Zero) { throw '工具栏未出现' }
     Log "工具栏已出现"
-
-    $btn = [IntPtr]::Zero; $c = [V2]::GetWindow($tb, 5)
-    while ($c -ne [IntPtr]::Zero) { if ([V2]::GetDlgCtrlID($c) -eq 4) { $btn = $c; break }; $c = [V2]::GetWindow($c, 2) }
-    [void][V2]::SendMessageW($btn, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)   # OCR
-    $ocrw = Wait-Enum $pid0 'PixShotOcrResult'
-    if ($ocrw -eq [IntPtr]::Zero) { throw '结果窗口未出现' }
-    Pump 300
 
     $btnPin = [IntPtr]::Zero; $c = [V2]::GetWindow($tb, 5)
     while ($c -ne [IntPtr]::Zero) { if ([V2]::GetDlgCtrlID($c) -eq 1) { $btnPin = $c; break }; $c = [V2]::GetWindow($c, 2) }
@@ -160,31 +153,19 @@ try {
     Log "  图像内(60,60) = $pinInner  [品红=图像保真 ✓]"
     Log "  图像外 $([int]($pad/2))px = $pinShadow  [品红被压暗=四周投影 ✓ / 纯品红=无阴影 ✗]"
 
-    # ── D. 结果窗口验证：靶标转为灰色衬底，非置顶，挪到结果窗口正后方 ──
-    $rr = Get-Rect $ocrw
-    $cw = $rr.Rt - $rr.L; $ch = $rr.B - $rr.T
-    Log ("结果窗口 rect=({0},{1})-({2},{3}) {4}x{5}" -f $rr.L, $rr.T, $rr.Rt, $rr.B, $cw, $ch)
+    # ── D. 前置其它窗口后，贴图仍应保持置顶（阴影视觉的现场观感）──
+    # 靶标转为灰色衬底并前置，用于观察贴图在其上方的观感与投影。
     $form.TopMost = $false
     $form.BackColor = [System.Drawing.Color]::FromArgb(128, 128, 128)
-    $form.Location = New-Object System.Drawing.Point(($rr.L - 20), ($rr.T - 20))
-    $form.Size = New-Object System.Drawing.Size(($cw + 40), ($ch + 40))
-    [void][V2]::SetForegroundWindow($ocrw)   # 确保结果窗口在衬底之上
+    $form.Location = New-Object System.Drawing.Point(250, 250)
+    $form.Size = New-Object System.Drawing.Size(700, 500)
+    [void][V2]::SetForegroundWindow($form.Handle)
     Pump 500
     Log-Rects 't3 表单移动+前台切换后' $pin
     Log "  [t3 实时] 贴图角(2,2)=$(Px ($pr.L + 2) ($pr.T + 2))，左边(0,300)=$(Px $pr.L ($pr.T + 300))"
     Pump 1000
     Log "  [t4 +1s 实时] 贴图角(2,2)=$(Px ($pr.L + 2) ($pr.T + 2))，左边(0,300)=$(Px $pr.L ($pr.T + 300))"
     Log-Rects 't4 矩形' $pin
-
-    # 采右侧（避开置顶贴图遮挡区 x<900）
-    $cCorner = Px ($rr.Rt - 2) ($rr.T + 1)          # 右上角
-    $cBorder = Px ($rr.Rt - 1) ($rr.T + 200)        # 右边线
-    $cCard = Px ($rr.Rt - 20) ($rr.T + 50)         # 卡片右上 margin（避开 EDIT：EDIT 右缘=客户区-24）
-    $cHeader = Px ($rr.Rt - 60) ($rr.T + 8)        # 标题带（Mica 或回退色）
-    Log "  结果窗右上角(Rt-2,T+1) = $cCorner  [灰(128,128,128)=圆角✓ / 卡片色=方角✗]"
-    Log "  结果窗右边(Rt-1,T+200) = $cBorder  [描边：灰底*80% ≈(102,102,102) ✓]"
-    Log "  结果窗卡片margin(Rt-20,T+50) = $cCard  [浅色=(255,255,255)/深色=(43,43,43)]"
-    Log "  结果窗标题带(Rt-60,T+8) = $cHeader  [非纯黑(0,0,0)即可；≈基色/材质色]"
 
     # ── E. 全屏存档 ──
     $sw = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width

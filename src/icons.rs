@@ -11,8 +11,7 @@
 //!
 //! 图标语义（括号内为对应的 Lucide 图标名）：
 //! [`Icon::Pin`] 贴图（`pin`）/ [`Icon::Save`] 保存图像（`download`）/
-//! [`Icon::Copy`] 复制并关闭（`copy`）/ [`Icon::Ocr`] 复制识别到的文字（`scan-text`）/
-//! [`Icon::Close`] 关闭（`x`）。
+//! [`Icon::Copy`] 复制并关闭（`copy`）/ [`Icon::Close`] 关闭（`x`）。
 
 use std::sync::OnceLock;
 
@@ -33,7 +32,6 @@ pub enum Icon {
     Pin,
     Save,
     Copy,
-    Ocr,
     Close,
 }
 
@@ -53,22 +51,12 @@ fn lucide_paths(icon: Icon) -> &'static [&'static str] {
         "M8 10a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2z",
         "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",
     ];
-    const SCAN_TEXT: [&str; 7] = [
-        "M3 7V5a2 2 0 0 1 2-2h2",
-        "M17 3h2a2 2 0 0 1 2 2v2",
-        "M21 17v2a2 2 0 0 1-2 2h-2",
-        "M7 21H5a2 2 0 0 1-2-2v-2",
-        "M7 8h8",
-        "M7 12h10",
-        "M7 16h6",
-    ];
     const X: [&str; 2] = ["M18 6 6 18", "m6 6 12 12"];
 
     match icon {
         Icon::Pin => std::slice::from_ref(&PIN),
         Icon::Save => &SAVE,
         Icon::Copy => &COPY,
-        Icon::Ocr => &SCAN_TEXT,
         Icon::Close => &X,
     }
 }
@@ -208,7 +196,7 @@ mod preview {
             let card = COLORREF(0x00FF_FFFF);
             let hover = COLORREF(0x00EC_ECEC);
             let ink = COLORREF(0x0000_0000);
-            let all = [Icon::Pin, Icon::Save, Icon::Copy, Icon::Ocr, Icon::Close];
+            let all = [Icon::Pin, Icon::Save, Icon::Copy, Icon::Close];
             for (i, icon) in all.iter().enumerate() {
                 for row in 0..2 {
                     let bg = if row == 0 { card } else { hover };

@@ -11,8 +11,6 @@ pub enum AppError {
     Io(std::io::Error),
     /// 本地逻辑检查错误。
     Config(String),
-    /// OCR 相关错误。
-    Ocr(String),
 }
 
 impl fmt::Display for AppError {
@@ -21,7 +19,6 @@ impl fmt::Display for AppError {
             Self::Win32(e) => write!(f, "Windows API 错误: {e}"),
             Self::Io(e) => write!(f, "I/O 错误: {e}"),
             Self::Config(msg) => write!(f, "{msg}"),
-            Self::Ocr(msg) => write!(f, "OCR 错误: {msg}"),
         }
     }
 }

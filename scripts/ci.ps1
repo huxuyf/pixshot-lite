@@ -19,7 +19,7 @@ PixShot 本地 CI 流水线
 参数
 ----
   -SkipE2E        跳过 GUI 端到端测试
-  -MaxSizeMB      release 产物体积上限（默认 2.6，用于防止依赖/特性膨胀）
+  -MaxSizeMB      release 产物体积上限（默认 2.0，用于防止依赖/特性膨胀）
   -TargetDir      自定义 CARGO_TARGET_DIR（默认仓库内 target\，不设置该环境变量）
 
 退出码
@@ -32,7 +32,7 @@ PixShot 本地 CI 流水线
 [CmdletBinding()]
 param(
     [switch]$SkipE2E,
-    [double]$MaxSizeMB = 2.6,
+    [double]$MaxSizeMB = 2.0,
     [string]$TargetDir = ''
 )
 
@@ -139,7 +139,7 @@ Invoke-Step '发布体积护栏' {
 
 # -------------------------------------------------------------- 6. GUI E2E
 if (-not $SkipE2E) {
-    Invoke-Step 'GUI 端到端（框选 → 贴图 → OCR，会接管鼠标键盘）' {
+    Invoke-Step 'GUI 端到端（框选 → 贴图 → 复制，会接管鼠标键盘）' {
         $e2e = Join-Path $PSScriptRoot 'gui_e2e_test.ps1'
         if (-not (Test-Path $e2e)) {
             throw "找不到 $e2e"

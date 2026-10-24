@@ -3,11 +3,10 @@ PixShot GUI 端到端自动化测试
 ============================
 在真实桌面上自动化跑通完整流程：
   框选截图 → 工具条（悬停提示 + 快捷键 Ctrl+C / Ctrl+T）→ 贴图置顶
-  （位置/置顶/拖动/滚轮缩放验证）→ 右键菜单 OCR（文字进剪贴板，与工具条一致）。
+  （位置/置顶/拖动/滚轮缩放/菜单重置缩放验证）。
 
 前置条件：
   - 已执行 cargo build（默认使用 target\debug\pixshot.exe）
-  - 系统已安装 OCR 语言包（Windows.Media.Ocr，见 README）
 
 注意：脚本运行期间（约 20 秒）会接管鼠标和键盘，请勿操作桌面。
       脚本自身以 Per-Monitor-V2 DPI 感知运行，125% 缩放下坐标仍为物理像素。
@@ -86,31 +85,6 @@ public class Win32 {
     [DllImport("kernel32.dll")] public static extern bool GlobalUnlock(IntPtr hmem);
 }
 "@
-# Win32 方式读取剪贴板文本（CF_UNICODETEXT=13）
-function Get-ClipText {
-    for ($i = 0; $i -lt 10; $i++) {
-        if ([Win32]::OpenClipboard([IntPtr]::Zero)) {
-            $h = [IntPtr]::Zero          # 预置，供 finally 安全引用
-            try {
-                if (-not [Win32]::IsClipboardFormatAvailable(13)) { return '' }
-                $h = [Win32]::GetClipboardData(13)
-                if ($h -eq [IntPtr]::Zero) { return '' }
-                $p = [Win32]::GlobalLock($h)
-                if ($p -eq [IntPtr]::Zero) { return '' }
-                $len = 0
-                while ($len -lt 200000 -and [Runtime.InteropServices.Marshal]::ReadInt16($p, $len * 2) -ne 0) { $len++ }
-                # 必须 return：否则本行只作为管道输出，for 会继续跑满 10 轮，
-                # 函数最终返回「10 份文本 + 末尾空串」的数组（表现为 Length=11 的假值）。
-                return [Runtime.InteropServices.Marshal]::PtrToStringUni($p, $len)
-            } finally {
-                [void][Win32]::GlobalUnlock($h)
-                [void][Win32]::CloseClipboard()
-            }
-        }
-        Start-Sleep -Milliseconds 40
-    }
-    return ''
-}
 # Win32 方式检查剪贴板是否含位图（CF_DIB=8）
 function Test-ClipDib {
     for ($i = 0; $i -lt 10; $i++) {
@@ -226,12 +200,12 @@ function Find-ChildById([IntPtr]$Parent, [int]$Id) {
 # 以下常量必须与 src/menu.rs 的 measure()/hit_test() 保持一致：
 #   pad = scaled(6)、item_h = scaled(34)、sep_h = scaled(9)（均为逻辑像素 × dpi/96）
 # 贴图菜单项顺序（src/pin.rs）：
-#   0 复制图像 / 1 保存为 <格式>… / 2 识别文字 (OCR) / 3[分隔线] 重置缩放 / 4[分隔线] 关闭贴图
+#   0 复制图像 / 1 保存为 <格式>… / 2[分隔线] 重置缩放 / 3[分隔线] 关闭贴图
 function Get-MenuItemCenter([IntPtr]$Menu, [int]$Index) {
     $d = [math]::Max([int][Win32]::GetDpiForWindow($Menu), [int]$dpi)
     $s = $d / 96.0
     $pad = 6; $itemH = 34; $sep = 9
-    $sepBefore = @(3, 4)             # 0 基索引：第 4、5 项前有分隔线
+    $sepBefore = @(2, 3)             # 0 基索引：第 3、4 项前有分隔线
     $top = $pad
     $centerY = $top
     for ($i = 0; $i -le $Index; $i++) {
@@ -296,7 +270,7 @@ function Check([string]$Name, $Ok, [string]$Detail = '') {
 }
 
 Write-Host ''
-Write-Host '==== PixShot GUI 端到端测试：框选截图 -> 贴图置顶(拖动/缩放) -> OCR ===='
+Write-Host '==== PixShot Lite GUI 端到端测试：框选截图 -> 贴图置顶(拖动/缩放) ===='
 Write-Host '  （脚本将接管鼠标键盘约 20 秒，请勿操作桌面）'
 Write-Host ''
 
@@ -412,11 +386,9 @@ try {
     $gh = ($r2.B - $r2.T) - ($r1.B - $r1.T)
     Check '滚轮缩放贴图（两次放大）' (($gw -gt [int]($SelW * 0.15)) -and ($gh -gt [int]($SelH * 0.15))) ("尺寸 +${gw}x+${gh}px")
 
-    # ── 7. 右键菜单 → 「识别文字 (OCR)」：与工具条 OCR **行为完全一致** ──
-    # 即：后台识别 → 文字写入剪贴板 → 主窗口 Toast；**不再弹出 OCR 结果窗口**。
+    # ── 7. 右键菜单 → 「重置缩放 (100%)」：缩放复原 ──
     # 菜单是自绘窗口 PixShotMenu，只处理 Esc，必须用鼠标点击菜单项。
-    # 贴图菜单第 3 项（0 基索引 2）即「识别文字 (OCR)」。
-    $clipBefore = Get-ClipText
+    # 贴图菜单第 3 项（0 基索引 2）即「重置缩放 (100%)」。
     $menuOk = $false
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         $menuOk = Select-PinMenuItem $pin 2
@@ -424,23 +396,14 @@ try {
         Write-Host ("  [重试] 第 {0} 次未等到贴图右键菜单弹出" -f $attempt)
         Start-Sleep -Milliseconds 400
     }
-    Check '右键菜单选择「识别文字 (OCR)」' $menuOk '自绘菜单已弹出，已点击第 3 项'
+    Check '右键菜单选择「重置缩放 (100%)」' $menuOk '自绘菜单已弹出，已点击第 3 项'
 
-    # ── 8. 等待识别完成：文字进入剪贴板（CF_UNICODETEXT）──
-    $ocrText = ''
-    $deadline = [Environment]::TickCount + 25000
-    while ([Environment]::TickCount -lt $deadline) {
-        $t = Get-ClipText
-        if ($t.Trim().Length -gt 0 -and $t -ne $clipBefore) { $ocrText = $t; break }
-        Start-Sleep -Milliseconds 250
-    }
-    Check '右键菜单 OCR 把文字写入剪贴板（与工具条一致）' ($ocrText.Trim().Length -gt 0) ("共 $($ocrText.Length) 字符")
-    Check '右键菜单 OCR 不再弹出结果窗口' ((Wait-Window 'PixShotOcrResult' 800) -eq [IntPtr]::Zero)
-    if ($ocrText) {
-        $prev = if ($ocrText.Length -gt 200) { $ocrText.Substring(0, 200) + '...' } else { $ocrText }
-        $oneline = ($prev -replace "[\r\n]+", " | ")
-        Write-Host ("  [OCR 文本预览] {0}" -f $oneline)
-    }
+    # ── 8. 断言缩放确实回到 100%（尺寸回到第 5 步记录的原始大小）──
+    Start-Sleep -Milliseconds 400
+    $r3 = Get-Rect $pin
+    $backOk = (($r3.R - $r3.L) -eq ($r1.R - $r1.L)) -and (($r3.B - $r3.T) -eq ($r1.B - $r1.T))
+    Check '重置缩放后贴图回到 100%（尺寸复原）' $backOk `
+        ("重置前 {0}x{1} -> 重置后 {2}x{3}" -f ($r2.R - $r2.L), ($r2.B - $r2.T), ($r3.R - $r3.L), ($r3.B - $r3.T))
 
     # ── 9. 贴图菜单「复制图像」→ 验证剪贴板位图（截图复制功能）──
     # 第 1 项（0 基索引 0）即「复制图像」；同样走自绘菜单 + 鼠标点击。
@@ -460,8 +423,7 @@ try {
     }
 
     # ── 10. 贴图菜单快捷键：展开菜单后按 Ctrl+C 即触发「复制图像」──
-    # 上一步 OCR 写入剪贴板的是文本，这里断言快捷键把剪贴板换成了 DIB，
-    # 才能证明菜单项快捷键真的生效（而不是恰好残留的旧内容）。
+    # 先清空剪贴板，再断言快捷键真的把图像写进去（而不是恰好残留的旧内容）。
     [void][Win32]::SetWindowPos($pin, $HWND_TOPMOST, 1150, 100, 0, 0, $SWP_TOP)
     Start-Sleep -Milliseconds 250
     # 先清掉上一步的位图，避免"通过"来自残留内容
@@ -483,7 +445,7 @@ try {
     Check '贴图菜单快捷键 Ctrl+C = 复制图像（CF_DIB）' (Test-ClipDib)
     Check '贴图菜单快捷键触发后菜单收起' (Wait-WindowGone 'PixShotMenu' 2000)
 
-    # ── 11. 最终存档：全屏（贴图 + 剪贴板 OCR 结果）──
+    # ── 11. 最终存档：全屏（贴图置顶状态）──
     Shot 0 0 $sw $sh (Join-Path $art 'final_state.png')
 } finally {
     if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
