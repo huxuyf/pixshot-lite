@@ -1,0 +1,102 @@
+name: Release
+
+# 推送到 main 即自动编译 Release 并在 Releases 页面发布；
+# 也可在 Actions 页面手动触发（workflow_dispatch）。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 发布 Release 需要写 contents 权限。
+permissions:
+  contents: write
+
+# 同一分支上新的推送会取消仍在跑的旧构建，避免排队。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-release:
+    name: 编译并发布 Release
+    # 必须是 Windows：build.rs 用 rc.exe 嵌入应用图标，
+    # 且依赖链中的 Win32 API 绑定只能在 Windows 目标上链接。
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链（MSVC）
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: 缓存 cargo 构建（加速后续构建）
+        uses: Swatinem/rust-cache@v2
+
+      - name: 读取版本号（以 Cargo.toml 为唯一来源）
+        id: version
+        shell: pwsh
+        run: |
+          $line = Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"' |
+                  Select-Object -First 1
+          if (-not $line) { throw '无法从 Cargo.toml 解析 version' }
+          $version = $line.Matches[0].Groups[1].Value
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "版本号：$version"
+
+      - name: 编译 Release
+        run: cargo build --release --locked
+
+      - name: 校验产物与体积
+        shell: pwsh
+        run: |
+          $exe = 'target/release/pixshot.exe'
+          if (-not (Test-Path $exe)) { throw "未生成 $exe" }
+          $mb = (Get-Item $exe).Length / 1MB
+          Write-Host ('产物体积 {0:N2} MB' -f $mb)
+          # 与 scripts\ci.ps1 一致的体积护栏：防止依赖/特性膨胀。
+          if ($mb -gt 3.0) { throw ('体积 {0:N2} MB 超出 3.0 MB 上限' -f $mb) }
+
+      - name: 打包发布文件（重命名 + 校验和）
+        id: package
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.value }}'
+          # 分发时按版本改名，且不带空格，方便直接下载运行。
+          $name = "pixshot-lite-v$version-x64.exe"
+          Copy-Item 'target/release/pixshot.exe' "target/release/$name"
+          $hash = (Get-FileHash "target/release/$name" -Algorithm SHA256).Hash
+          "$hash  $name" | Out-File -FilePath 'target/release/SHA256SUMS.txt' -Encoding ascii
+          "asset=target/release/$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sha256=$hash"          | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "SHA256: $hash"
+
+      - name: 生成 Release 说明
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.value }}'
+          @"
+          PixShot Lite v$version（构建 ${{ github.run_number }}）
+
+          精简版 Windows 桌面工具：框选截图 / 贴图置顶（Rust + Win32，单文件免安装）。
+
+          - 提交：${{ github.sha }}
+          - 触发：${{ github.event_name }}（${{ github.actor }}）
+          - SHA256：${{ steps.package.outputs.sha256 }}
+
+          下载下方的 ``pixshot-lite-v$version-x64.exe`` 直接运行，无需安装、无 DLL 依赖。
+          "@ | Out-File -FilePath 'release_notes.md' -Encoding utf8
+
+      - name: 发布到 GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          # 版本号来自 Cargo.toml，构建号保证每次推送都有唯一 tag、不覆盖历史发布。
+          tag_name: v${{ steps.version.outputs.value }}-b${{ github.run_number }}
+          name: PixShot Lite v${{ steps.version.outputs.value }} (b${{ github.run_number }})
+          body_path: release_notes.md
+          make_latest: true
+          files: |
+            ${{ steps.package.outputs.asset }}
+            target/release/SHA256SUMS.txt
