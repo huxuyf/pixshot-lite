@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: 检出源码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 安装 Rust 工具链（MSVC）
         uses: dtolnay/rust-toolchain@stable
@@ -90,13 +90,15 @@ jobs:
           "@ | Out-File -FilePath 'release_notes.md' -Encoding utf8
 
       - name: 发布到 GitHub Releases
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # 版本号来自 Cargo.toml，构建号保证每次推送都有唯一 tag、不覆盖历史发布。
           tag_name: v${{ steps.version.outputs.value }}-b${{ github.run_number }}
           name: PixShot Lite v${{ steps.version.outputs.value }} (b${{ github.run_number }})
           body_path: release_notes.md
           make_latest: true
+          # 产物缺失时直接失败，避免发布出没有附件的空 release。
+          fail_on_unmatched_files: true
           files: |
             ${{ steps.package.outputs.asset }}
             target/release/SHA256SUMS.txt
