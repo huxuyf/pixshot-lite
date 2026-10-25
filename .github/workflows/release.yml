@@ -94,6 +94,9 @@ jobs:
           } else {
             Write-Host "tag $tag 不存在，将由发布步骤在当前提交上创建"
           }
+          # 探测用的 gh api 在 tag 不存在时返回 404，$LASTEXITCODE 会残留非 0；
+          # 步骤结束时 PowerShell 会把它当作本步退出码，故显式收尾。
+          exit 0
 
       - name: 生成 Release 说明
         shell: pwsh
