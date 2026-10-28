@@ -1,14 +1,31 @@
-//! build.rs —— 应用图标生成与嵌入（零新增依赖）。
+//! build.rs —— 应用图标与进程清单的生成 / 嵌入（零新增依赖）。
 //!
 //! 1. 纯 Rust 光栅化器渲染 Fluent 风格应用图标（圆角方形 + 白色取景框
 //!    四角括号 + 焦点圆点，蓝色→蓝紫渐变），4× 超采样抗锯齿；
 //!    几何定义在 `src/icon_geometry.rs`（与单元测试共用同一份代码）；
 //! 2. 输出多尺寸 .ico（16/24/32/48/64）；
-//! 3. 编译 `1 ICON` 资源对象并链接进 exe ——
+//! 3. 编译 `1 ICON` 与 `1 24`（RT_MANIFEST，即 `app.manifest`）资源并链接进 exe ——
 //!    GNU 工具链用 `windres`，MSVC 工具链用 `rc.exe`（均随工具链自带）。
 //!
+//! **清单（manifest）为何必不可少**：它声明 `PerMonitorV2`，在进程启动前就把 DPI
+//! 感知级别定死，从而保证截屏走**物理像素**。缺了它、又遇上 `main()` 里的运行时
+//! 调用未生效，进程会退化为 DPI 非感知 —— 系统按逻辑分辨率（125% 缩放下
+//! 1536×864）捕获再放大到物理分辨率，整幅截图被重采样，表现即「模糊、看不清」。
+//!
+//! 两种工具链的差别（都已在下面处理）：
+//! - **MSVC**：`link.exe` 默认会嵌入一份自己的清单，故 `rc.exe` 的产物里放
+//!   `1 24`，并追加 `/MANIFEST:NO` 让默认那份不再出现；
+//! - **GNU**：MinGW 的 GCC specs 里有 `%{!shared:%:if-exists(default-manifest.o%s)}`，
+//!   它会自动链接 lib 目录下的 `default-manifest.o`（含 asInvoker + supportedOS，
+//!   但**没有** DPI 声明）。因此这里把 `app.manifest` 编译成同名对象放进 `OUT_DIR`，
+//!   再用 `-B<OUT_DIR>` 把它排到 GCC 的 **startfile 前缀**最前 —— `if-exists` 取
+//!   第一个找到的，于是替换掉自带那份（注意：`-L` 库路径对 startfile 查找无效，
+//!   实测加了 `-L` 仍会链接到 MinGW 那份）。直接往 .rc 里塞 `1 24` 也不行：
+//!   会和自带清单构成重复的 `RT_MANIFEST/ID=1/语言=0` 资源，反而让 Windows 取错。
+//!
 //! 失败策略（修复静默降级）：两种编译器都找不到时 **构建失败** 并给出解决方式；
-//! 确需无图标构建可设 `PIXSHOT_NO_ICON=1` 显式跳过。
+//! 确需无资源构建可设 `PIXSHOT_NO_ICON=1` 显式跳过（此时 DPI 仅靠 `main()` 的
+//! 运行时调用兜底，见 `src/main.rs::verify_dpi_awareness`）。
 
 use std::env;
 use std::fs;
@@ -29,9 +46,10 @@ const GRAD_BOT: [f32; 3] = [70.0, 90.0, 230.0];
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/icon_geometry.rs");
+    println!("cargo:rerun-if-changed=app.manifest");
 
     if env::var_os("PIXSHOT_NO_ICON").is_some() {
-        println!("cargo:warning=PIXSHOT_NO_ICON 已设置 -> 跳过图标嵌入（托盘将回退系统默认图标）");
+        println!("cargo:warning=PIXSHOT_NO_ICON 已设置 -> 跳过图标与清单嵌入（托盘回退系统默认图标，DPI 仅靠运行时调用兜底）");
         return;
     }
 
@@ -43,13 +61,13 @@ fn main() {
     let sizes: [u32; 5] = [16, 24, 32, 48, 64];
     write_ico(&ico_path, &sizes);
 
-    match embed_icon(&out, &ico_path) {
+    match embed_resources(&out, &ico_path) {
         Ok(res) => println!("cargo:rustc-link-arg-bins={}", res.display()),
         Err(e) => {
-            // 图标是产品的一部分：静默降级会导致"exe 没有图标"这种极难排查的问题，
-            // 这里直接让构建失败，并在信息里给出两种解决方式。
+            // 图标/清单都是产品的一部分：静默降级会导致"exe 没有图标"或
+            // "截图在高 DPI 下模糊"这种极难排查的问题，这里直接让构建失败。
             panic!(
-                "\n\n应用图标嵌入失败：{e}\n\
+                "\n\n应用资源（图标 + 进程清单）嵌入失败：{e}\n\
                  \n\
                  解决方式（任选其一）：\n\
                  1) 使用任一自带资源编译器的工具链构建：\n\
@@ -178,36 +196,60 @@ enum RcTool {
     MsvcRc(String),
 }
 
-fn embed_icon(out: &Path, ico: &Path) -> Result<PathBuf, String> {
-    let rc = out.join("icon.rc");
-    // 路径统一成正斜杠：windres / rc 均接受，且免去反斜杠转义歧义
-    fs::write(
-        &rc,
-        format!("1 ICON \"{}\"\n", ico.display().to_string().replace('\\', "/")),
+/// 编译并登记「图标 + 进程清单」两类资源，返回需要交给 `rustc-link-arg-bins` 的产物。
+///
+/// 清单文件固定取仓库根的 `app.manifest`（与 `build.rs` 同级）。
+fn embed_resources(out: &Path, ico: &Path) -> Result<PathBuf, String> {
+    let manifest = PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR").map_err(|e| format!("读 CARGO_MANIFEST_DIR 失败: {e}"))?,
     )
-    .map_err(|e| format!("写 icon.rc 失败: {e}"))?;
+    .join("app.manifest");
+    if !manifest.is_file() {
+        return Err(format!("缺少进程清单 {}", manifest.display()));
+    }
+    // 路径统一成正斜杠：windres / rc 均接受，且免去反斜杠转义歧义
+    let ico_s = ico.display().to_string().replace('\\', "/");
+    let man_s = manifest.display().to_string().replace('\\', "/");
 
     let tool = find_tool()
         .ok_or_else(|| "PATH 中既没有 windres.exe（MinGW）也没有 rc.exe（MSVC）".to_string())?;
 
     match tool {
+        // ── GNU：图标单独成对象；清单编译成 default-manifest.o 并抢占库搜索顺序 ──
         RcTool::Windres(exe) => {
-            let obj = out.join("icon_res.o");
-            let st = Command::new(&exe)
-                .arg("--target=pe-x86-64")
-                .arg("--input")
-                .arg(&rc)
-                .arg("--output")
-                .arg(&obj)
-                .status()
-                .map_err(|e| format!("执行 ({exe}) 失败: {e}"))?;
-            if !st.success() {
-                return Err(format!("windres 退出码 {st}"));
-            }
-            Ok(obj)
+            let icon_rc = out.join("icon.rc");
+            fs::write(&icon_rc, format!("1 ICON \"{ico_s}\"\n"))
+                .map_err(|e| format!("写 icon.rc 失败: {e}"))?;
+            let icon_obj = out.join("icon_res.o");
+            run_windres(&exe, &icon_rc, &icon_obj, None)?;
+
+            // 清单：资源类型 24（RT_MANIFEST）、ID 1、语言必须为中性 0
+            // （清单加载器按 MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL) 查找）。
+            let man_rc = out.join("manifest.rc");
+            fs::write(&man_rc, format!("1 24 \"{man_s}\"\n"))
+                .map_err(|e| format!("写 manifest.rc 失败: {e}"))?;
+            let man_obj = out.join("default-manifest.o");
+            run_windres(&exe, &man_rc, &man_obj, Some("0"))?;
+
+            // 让 OUT_DIR 排进 GCC 的 **startfile 前缀**最前：specs 里的
+            // `%{!shared:%:if-exists(default-manifest.o%s)}` 是按 startfile 前缀
+            // （由 `-B` 控制）查找的，而不是 `-L` 库路径 —— 用 `-L` 无效，实测
+            // 仍然链接到 MinGW 那份。`-B` 同时也会让 gcc 优先在 OUT_DIR 找 as/ld/crt
+            // 等，找不到会继续回退到自带前缀，故安全。
+            println!("cargo:rustc-link-arg-bins=-B{}", out.display());
+            Ok(icon_obj)
         }
+        // ── MSVC：一个 .rc 同时放图标与清单，并抑制 link.exe 的默认清单 ──
         RcTool::MsvcRc(exe) => {
-            let res = out.join("icon_res.res");
+            let rc = out.join("res.rc");
+            // 清单资源必须为**中性语言**（LANGUAGE 0x00,0x00）：清单加载器按
+            // LANG_NEUTRAL 查找，用 rc.exe 的默认语言 0x409 有可能找不到。
+            fs::write(
+                &rc,
+                format!("1 ICON \"{ico_s}\"\nLANGUAGE 0x00, 0x00\n1 24 \"{man_s}\"\n"),
+            )
+            .map_err(|e| format!("写 res.rc 失败: {e}"))?;
+            let res = out.join("res.res");
             let st = Command::new(&exe)
                 .arg("/nologo")
                 .arg(format!("/fo{}", res.display()))
@@ -217,9 +259,33 @@ fn embed_icon(out: &Path, ico: &Path) -> Result<PathBuf, String> {
             if !st.success() {
                 return Err(format!("rc.exe 退出码 {st}"));
             }
+            // link.exe 默认会生成并嵌一份自己的清单（rustc 不传 /MANIFEST*，全靠
+            // 这个默认行为）。不关掉就会出现两个 RT_MANIFEST 资源冲突（CVT1100），
+            // 或让系统取到不含 DPI 声明的那份 —— 必须让我们的成为唯一。
+            println!("cargo:rustc-link-arg-bins=/MANIFEST:NO");
             Ok(res)
         }
     }
+}
+
+/// 调 `windres` 把 `.rc` 编译成 COFF 对象；`lang` 为 `Some` 时写死默认语言。
+fn run_windres(exe: &str, rc: &Path, obj: &Path, lang: Option<&str>) -> Result<(), String> {
+    let mut cmd = Command::new(exe);
+    cmd.arg("--target=pe-x86-64");
+    if let Some(l) = lang {
+        cmd.arg("--lang").arg(l);
+    }
+    let st = cmd
+        .arg("--input")
+        .arg(rc)
+        .arg("--output")
+        .arg(obj)
+        .status()
+        .map_err(|e| format!("执行 ({exe}) 失败: {e}"))?;
+    if !st.success() {
+        return Err(format!("windres 退出码 {st}（输入 {}）", rc.display()));
+    }
+    Ok(())
 }
 
 fn find_tool() -> Option<RcTool> {

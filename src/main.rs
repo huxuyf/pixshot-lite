@@ -49,6 +49,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() {
+    // 0) 最优先：定死 DPI 感知级别。
+    //    截图的清晰度完全由它决定（见 `app.manifest` 与 [`verify_dpi_awareness`]），
+    //    而它只能在「尚未创建任何窗口、且未被任何 DPI 相关 API 锁定」之前设置 ——
+    //    晚一步就会静默失败，且**无法补救**。因此放在一切之前。
+    set_dpi_awareness();
+
     // panic 可见性：本程序是 windows 子系统（无控制台），默认 panic 完全静默。
     install_panic_hook();
 
@@ -69,6 +75,8 @@ fn main() {
         std::env::current_exe(),
         std::env::args().collect::<Vec<_>>()
     ));
+    // 记录实际生效的 DPI 感知级别 —— 这是"截图清晰度"的唯一决定因素，必须可见
+    verify_dpi_awareness();
 
     // 本应用无任何文本输入（框选/贴图均为只读展示），在首个窗口创建前禁用
     // 当前线程 IME，阻止输入法 DLL 注入（实测可省 ~34MB 内存、消除 ~1% 空闲 CPU）
@@ -77,13 +85,6 @@ fn main() {
         use windows::Win32::UI::Input::Ime::ImmDisableIME;
         let _ = ImmDisableIME(GetCurrentThreadId());
         diag::log("[boot] ImmDisableIME 已调用");
-    }
-
-    // 每显示器 DPI 感知：保证截屏/窗口坐标为物理像素
-    unsafe {
-        if SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_err() {
-            let _ = SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
-        }
     }
 
     // 配置加载失败/非法项不影响启动（内部一律回退默认值）
@@ -123,6 +124,56 @@ fn install_panic_hook() {
 /// 是否允许弹窗提示（自动化测试可设 PIXSHOT_NO_UI_ALERTS=1 屏蔽）。
 fn alerts_enabled() -> bool {
     std::env::var_os("PIXSHOT_NO_UI_ALERTS").is_none()
+}
+
+// ─── DPI 感知 ────────────────────────────────────────────────────
+//
+// 截图分辨率 = 进程 DPI 感知级别的直接结果：
+// - 每显示器感知（PerMonitorV2）：GetSystemMetrics(SM_*VIRTUALSCREEN) 与屏幕 DC 的
+//   BitBlt 一律按**物理像素**工作，截图清晰；
+// - 非感知：系统按**逻辑分辨率**捕获再放大到物理分辨率（125% 缩放下 1536×864 →
+//   1920×1080），每个像素都被重采样 —— 表现就是「截图模糊、文字看不清」。
+
+/// 设定进程 DPI 感知级别。必须是 `main()` 的第一件事。
+///
+/// 正常路径由 `app.manifest` 在启动前声明 PerMonitorV2（此时本调用返回
+/// `E_ACCESSDENIED`，属预期结果）；这里作为「清单缺失/被忽略」时的兜底。
+/// 两条路径都失败时进程会退化为非感知，[`verify_dpi_awareness`] 会把它明确记下来。
+fn set_dpi_awareness() {
+    unsafe {
+        if SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_ok() {
+            return;
+        }
+        let _ = SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+    }
+}
+
+/// 当前线程实际生效的 DPI 感知级别（0=非感知 / 1=系统感知 / 2=每显示器感知）。
+fn current_dpi_awareness() -> i32 {
+    use windows::Win32::UI::HiDpi::{
+        GetAwarenessFromDpiAwarenessContext, GetThreadDpiAwarenessContext,
+    };
+    unsafe { GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()).0 }
+}
+
+/// 把实际生效的 DPI 感知级别写进诊断日志；退化时给出明确告警。
+///
+/// 之所以要"显式校验"：这套适配历史上只依赖一次运行时调用且丢弃其返回值，
+/// 一旦失效（清单位置不对、被别的 API 抢先锁定等）就是**静默**退化，用户只会看到
+/// "截图怎么糊了"，无从排查。
+fn verify_dpi_awareness() -> i32 {
+    use windows::Win32::UI::HiDpi::DPI_AWARENESS_PER_MONITOR_AWARE;
+    let aware = current_dpi_awareness();
+    diag::log(&format!(
+        "[boot] DPI 感知级别 = {aware}（期望 {}）；{}",
+        DPI_AWARENESS_PER_MONITOR_AWARE.0,
+        if aware == DPI_AWARENESS_PER_MONITOR_AWARE.0 {
+            "截图为物理像素"
+        } else {
+            "警告：非每显示器感知 -> 截图会按逻辑分辨率捕获并被系统放大（模糊）"
+        }
+    ));
+    aware
 }
 
 // ─── GUI 主流程 ──────────────────────────────────────────────────
@@ -280,11 +331,23 @@ fn run_smoke() -> i32 {
     println!("PixShot Lite smoke 测试：全屏截图 → 保存图片");
     println!();
 
+    // 截图分辨率先决条件：进程必须是每显示器 DPI 感知，否则系统会按逻辑分辨率
+    // 捕获再放大（即「截图模糊」）。这里显式校验，避免"看起来跑通、其实已降级"。
+    let aware = current_dpi_awareness();
+    if aware != windows::Win32::UI::HiDpi::DPI_AWARENESS_PER_MONITOR_AWARE.0 {
+        println!(
+            "[失败] DPI 感知级别 = {aware}，非每显示器感知（期望 2）。\n\
+             此时截图会按逻辑分辨率捕获并被系统放大，清晰度不合格。\n\
+             请检查 app.manifest 是否被正确嵌入（未嵌入时依赖 main() 的运行时调用）。"
+        );
+        return 2;
+    }
+
     let fmt = config::get().format;
     let out = format!("pixshot_smoke.{}", fmt.ext());
 
     let (vx, vy, vw, vh) = capture::virtual_screen_rect();
-    println!("[1/2] 截取全屏（虚拟屏幕 {vw}×{vh} @ {vx},{vy}）...");
+    println!("[1/2] 截取全屏（虚拟屏幕 {vw}×{vh} @ {vx},{vy}，DPI 感知级别 {aware}）...");
     let img = match capture::capture_region(vx, vy, vw, vh) {
         Ok(i) => {
             println!("[OK] 截屏成功：{}×{}", i.width, i.height);

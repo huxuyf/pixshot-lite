@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!-- 进程清单：在进程启动前就把 DPI 感知级别定死，不依赖任何一次运行时 API 调用。
+
+       为什么必须放在清单里（而不是只靠 main() 里的 SetProcessDpiAwarenessContext）：
+       截图分辨率 = 进程 DPI 感知级别的直接结果。声明 PerMonitorV2 后，
+       GetSystemMetrics(SM_*VIRTUALSCREEN) 与屏幕 DC 的 BitBlt 一律按**物理像素**
+       工作；一旦进程退化为 DPI 非感知，系统会把整屏按逻辑分辨率（如 125% 缩放下
+       1536×864）捕获再放大到物理分辨率（1920×1080），每个像素都被重采样 ——
+       表现就是「截图模糊、文字看不清」。清单在代码运行前生效，是唯一不会静默失效的
+       保障；main() 里的运行时调用作为兜底保留（见 src/main.rs 的 verify_dpi_awareness）。 -->
+
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!-- PerMonitorV2：Windows 10 1703+ 的推荐级别（含每显示器 DPI 变化通知） -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <!-- 旧系统回退：Windows 8.1 / 10 早期版本读这一项（true/PM = 每显示器感知） -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/PM</dpiAware>
+    </windowsSettings>
+  </application>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / 11。缺这一项会让部分 API 走旧系统的兼容分支。 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>
