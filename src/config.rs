@@ -61,8 +61,6 @@ pub struct Config {
     pub save_dir: Option<String>,
     /// 轻提示停留时长（毫秒）。
     pub toast_ms: u32,
-    /// 截图是否包含鼠标指针（`BitBlt` 默认不含，需手动合成，见 `cursor` 模块）。
-    pub capture_cursor: bool,
 }
 
 impl Default for Config {
@@ -72,7 +70,6 @@ impl Default for Config {
             format: SaveFormat::Png,
             save_dir: None,
             toast_ms: 1600,
-            capture_cursor: false,
         }
     }
 }
@@ -141,12 +138,11 @@ fn load() -> Config {
                 crate::diag::log(&format!("[config] {w}"));
             }
             crate::diag::log(&format!(
-                "[config] 已加载 {} -> hotkey={} format={} save_dir={:?} capture_cursor={}",
+                "[config] 已加载 {} -> hotkey={} format={} save_dir={:?}",
                 p.display(),
                 c.hotkey,
                 c.format.ext(),
-                c.save_dir,
-                c.capture_cursor
+                c.save_dir
             ));
             c
         }
@@ -186,11 +182,6 @@ pub fn render(c: &Config) -> String {
     s.push_str(&format!("save_dir = {}\n\n", c.save_dir.as_deref().unwrap_or("")));
     s.push_str("# 成功提示停留时长（毫秒，300-10000）\n");
     s.push_str(&format!("toast_ms = {}\n\n", c.toast_ms));
-    s.push_str("# 截图是否包含鼠标指针：true / false\n");
-    s.push_str(&format!(
-        "capture_cursor = {}\n",
-        if c.capture_cursor { "true" } else { "false" }
-    ));
     s
 }
 
@@ -240,10 +231,6 @@ pub fn parse_detailed(text: &str) -> (Config, Vec<String>) {
                 if let Ok(n) = val.parse::<u32>() {
                     c.toast_ms = n.clamp(300, 10_000);
                 }
-            }
-            "capture_cursor" => {
-                let v = val.to_ascii_lowercase();
-                c.capture_cursor = matches!(v.as_str(), "true" | "1" | "yes" | "on");
             }
             _ => {}
         }
@@ -369,15 +356,6 @@ mod tests {
         assert_eq!(c.toast_ms, 900);
     }
 
-    #[test]
-    fn parse_capture_cursor_flag() {
-        assert!(!Config::default().capture_cursor, "默认不含指针");
-        assert!(parse("capture_cursor = true\n").capture_cursor);
-        assert!(parse("capture_cursor = YES\n").capture_cursor);
-        assert!(!parse("capture_cursor = false\n").capture_cursor);
-        assert!(!parse("capture_cursor = 随便\n").capture_cursor); // 非法值回退 false
-    }
-
     /// 渲染 → 解析 必须幂等（否则每次退出都会改写用户配置）。
     #[test]
     fn render_parse_roundtrip() {
@@ -386,13 +364,11 @@ mod tests {
         c.format = SaveFormat::Bmp;
         c.save_dir = Some(r"C:\temp".into());
         c.toast_ms = 2000;
-        c.capture_cursor = true;
         let back = parse(&render(&c));
         assert_eq!(back.hotkey, c.hotkey);
         assert_eq!(back.format, c.format);
         assert_eq!(back.save_dir, c.save_dir);
         assert_eq!(back.toast_ms, c.toast_ms);
-        assert_eq!(back.capture_cursor, c.capture_cursor);
     }
 
     #[test]

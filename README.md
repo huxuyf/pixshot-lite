@@ -48,7 +48,6 @@ hotkey   = F1                ; 全局热键，支持 Ctrl / Alt / Shift / Win �
 format   = png               ; 保存格式：png / jpg / bmp
 save_dir =                   ; 默认保存目录，留空则每次从系统默认位置开始
 toast_ms = 1600              ; 操作提示的停留毫秒数
-capture_cursor = false       ; 截图是否包含鼠标指针：true / false
 ```
 
 非法值会自动回退默认，不会因配置写坏而启动失败。

@@ -22,7 +22,6 @@ mod autostart;
 mod capture;
 mod clipboard;
 mod config;
-mod cursor;
 mod diag;
 mod error;
 mod icons;
@@ -286,7 +285,7 @@ fn run_smoke() -> i32 {
 
     let (vx, vy, vw, vh) = capture::virtual_screen_rect();
     println!("[1/2] 截取全屏（虚拟屏幕 {vw}×{vh} @ {vx},{vy}）...");
-    let img = match capture::capture_region_ex(vx, vy, vw, vh, config::get().capture_cursor) {
+    let img = match capture::capture_region(vx, vy, vw, vh) {
         Ok(i) => {
             println!("[OK] 截屏成功：{}×{}", i.width, i.height);
             i

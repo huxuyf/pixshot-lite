@@ -93,26 +93,11 @@ fn top_down_header(w: i32, h: i32) -> BITMAPINFO {
     }
 }
 
-/// 截取虚拟屏幕上 (x, y, w, h) 区域（物理像素），不含鼠标指针。
+/// 截取虚拟屏幕上 (x, y, w, h) 区域（物理像素）。
 ///
-/// 截图主流程统一走 [`capture_region_ex`]（按配置决定是否含指针）；本函数保留为
-/// 「确定不含指针」的便捷入口。
-#[allow(dead_code)]
+/// 截图主流程统一走本函数。`BitBlt` 本身**不含鼠标指针**——Windows 光标由
+/// 硬件/GDI 叠加层单独绘制，抓屏拿到的永远是无光标画面，因此截图结果不含光标。
 pub fn capture_region(x: i32, y: i32, w: i32, h: i32) -> Result<CapturedImage> {
-    capture_region_ex(x, y, w, h, false)
-}
-
-/// 同 [`capture_region`]，`with_cursor` 为真时把当前鼠标指针合成进像素。
-///
-/// 合成发生在 `BitBlt` 之后、读出像素之前（此时目标 DIB 仍装着屏幕内容），
-/// 由 [`crate::cursor::draw_cursor_on`] 完成——`BitBlt` 本身不含光标，见该模块说明。
-pub fn capture_region_ex(
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    with_cursor: bool,
-) -> Result<CapturedImage> {
     if w <= 0 || h <= 0 {
         return Err(AppError::Config("截屏区域为空".into()));
     }
@@ -157,10 +142,6 @@ pub fn capture_region_ex(
 
         let old = SelectObject(mem_dc, dib);
         let blt = BitBlt(mem_dc, 0, 0, w, h, screen_dc, x, y, SRCCOPY);
-        // 必须在 dib 仍选中时画光标（合成到屏幕内容之上），且早于读出像素
-        if with_cursor && blt.is_ok() {
-            crate::cursor::draw_cursor_on(mem_dc, x, y);
-        }
         SelectObject(mem_dc, old);
 
         let out = if let Err(e) = blt {

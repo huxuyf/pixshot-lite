@@ -297,10 +297,7 @@ fn precapture() {
         return;
     }
     let t0 = Instant::now();
-    // 用配置开关：热键那一刻若开着"含指针"，快照里就带上按下热键时的光标位置
-    if let Ok(img) =
-        capture::capture_region_ex(vx, vy, vw, vh, config::get().capture_cursor)
-    {
+    if let Ok(img) = capture::capture_region(vx, vy, vw, vh) {
         diag::log(&format!(
             "[hotkey] 预捕获整屏 {}×{} @ {vx},{vy} 用时 {:?}",
             img.width,

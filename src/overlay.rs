@@ -168,10 +168,7 @@ unsafe fn run() -> Option<Selection> {
         }
         _ => {
             crate::diag::log("[overlay] 无可用预捕获快照 -> 当场抓帧");
-            Arc::new(
-                capture::capture_region_ex(vx, vy, vw, vh, crate::config::get().capture_cursor)
-                    .ok()?,
-            )
+            Arc::new(capture::capture_region(vx, vy, vw, vh).ok()?)
         }
     };
 
