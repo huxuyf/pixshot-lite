@@ -57,33 +57,38 @@ jobs:
         uses: actions/checkout@v7
 
       # GNU 宿主工具链的链接器（gcc）、build.rs 的资源编译器（windres）以及兼容性闸门
-      # 要用的 objdump 都来自 MinGW。镜像虽然预装了 MSYS2（C:\msys64），但**不带
-      # mingw-w64 工具链，也不在 PATH 上**（实测 `C:\msys64\mingw64\bin\gcc.exe` 不存在），
-      # 所以用官方 action 把工具链装齐并挂到 PATH。
-      - name: 准备 MinGW-w64（gcc / windres / objdump）
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: false
-          install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-binutils
-          path-type: inherit
+      # 要用的 objdump 都来自 MinGW。
+      #
+      # 用**镜像自带的 MSYS2**（C:\msys64，预装但不含 mingw-w64 工具链、也不在 PATH 上）
+      # 自己装 MSVCRT 版的 toolchain，而不是 msys2/setup-msys2 action —— 后者会另下一份
+      # MSYS2 到别处，路径不可预测（实测装完 C:\msys64\mingw64\bin\gcc.exe 仍不存在）。
+      #
+      # 也不能用镜像里那份独立的 C:\mingw64：它是 **UCRT** 版，链接出来的产物会导入
+      # api-ms-win-crt-* 一族（其中 api-ms-win-crt-private-l1-1-0.dll 在 Windows 7 上
+      # 并不存在），兼容性闸门会直接拦下。
+      - name: 安装 MSVCRT 版 MinGW-w64（gcc / windres / objdump）
+        shell: pwsh
+        run: |
+          $bash = 'C:\msys64\usr\bin\bash.exe'
+          if (-not (Test-Path $bash)) { throw "镜像里没有 $bash（MSYS2 未预装？）" }
+          & $bash -lc 'pacman -Sy --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils'
+          if ($LASTEXITCODE -ne 0) { throw "pacman 安装失败（exit $LASTEXITCODE）" }
 
-      # 上面装了却没生效时要在这一步明确炸掉，而不是让后面的链接/闸门报出难懂的错误。
+      # 装完没生效时要在这一步明确炸掉，而不是让后面的链接/闸门报出难懂的错误。
       - name: 校验 MinGW 工具可见
         shell: pwsh
         run: |
-          foreach ($tool in @('windres', 'objdump')) {
-            $found = (Get-Command $tool -ErrorAction SilentlyContinue).Source
-            if (-not $found) { throw "PATH 中找不到 $tool" }
-            Write-Host "$tool -> $found"
+          $mingw = 'C:\msys64\mingw64\bin'
+          # 前置到 PATH（GITHUB_PATH 的条目会在后续步骤排在最前），让 build.rs 找 windres、
+          # 闸门找 objdump 时都用同一份工具链，而不是镜像自带的 C:\mingw64\bin。
+          $mingw | Out-File -FilePath $env:GITHUB_PATH -Append
+          foreach ($tool in @('gcc.exe', 'windres.exe', 'objdump.exe')) {
+            $path = Join-Path $mingw $tool
+            if (-not (Test-Path $path)) { throw "找不到 $path" }
           }
-          # 链接器由 CARGO_TARGET_..._LINKER 指定，必须落在 MSYS2 的 MSVCRT 版 gcc 上；
-          # 镜像自带的 C:\mingw64 是 UCRT 版，用了会让产物依赖 Win7 上不存在的 api-set。
           $linker = $env:CARGO_TARGET_X86_64_WIN7_WINDOWS_GNU_LINKER
-          if (-not (Test-Path $linker)) { throw "链接器不存在：$linker" }
-          if ($linker -notlike 'C:\msys64\*') { throw "链接器不在 MSYS2 下：$linker" }
+          $expected = Join-Path $mingw 'gcc.exe'
+          if ($linker -ne $expected) { throw "链接器应为 $expected，实际 $linker" }
           Write-Host "linker -> $linker"
           & $linker -dumpmachine
           & $linker -v 2>&1 | Select-String -Pattern 'with-default-msvcrt' | Select-Object -First 1
