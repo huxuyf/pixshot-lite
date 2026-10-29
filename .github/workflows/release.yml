@@ -50,16 +50,29 @@ jobs:
         uses: actions/checkout@v7
 
       # GNU 宿主工具链的链接器（gcc）、build.rs 的资源编译器（windres）以及兼容性闸门
-      # 要用的 objdump 都来自 MinGW。镜像自带 MSYS2，把它的 bin 目录挂到 PATH 最前。
-      - name: 准备 MinGW（gcc / windres / objdump）
+      # 要用的 objdump 都来自 MinGW。镜像虽然预装了 MSYS2（C:\msys64），但**不带
+      # mingw-w64 工具链，也不在 PATH 上**（实测 `C:\msys64\mingw64\bin\gcc.exe` 不存在），
+      # 所以用官方 action 把工具链装齐并挂到 PATH。
+      - name: 准备 MinGW-w64（gcc / windres / objdump）
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+          path-type: inherit
+
+      # 上面装了却没生效时要在这一步明确炸掉，而不是让后面的链接/闸门报出难懂的错误。
+      - name: 校验 MinGW 工具可见
         shell: pwsh
         run: |
-          $mingw = 'C:\msys64\mingw64\bin'
-          foreach ($tool in @('gcc.exe', 'windres.exe', 'objdump.exe')) {
-            if (-not (Test-Path (Join-Path $mingw $tool))) { throw "缺少 $mingw\$tool" }
+          foreach ($tool in @('gcc', 'windres', 'objdump')) {
+            $found = (Get-Command $tool -ErrorAction SilentlyContinue).Source
+            if (-not $found) { throw "PATH 中找不到 $tool" }
+            Write-Host "$tool -> $found"
           }
-          $mingw | Out-File -FilePath $env:GITHUB_PATH -Append
-          & (Join-Path $mingw 'gcc.exe') --version | Select-Object -First 1
+          gcc --version | Select-Object -First 1
 
       - name: 安装锁定版本的 Rust nightly（含 rust-src 与 rust-mingw）
         shell: pwsh
