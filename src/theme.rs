@@ -13,7 +13,7 @@
 
 use std::cell::RefCell;
 
-use crate::util::to_wide;
+use crate::util::{dpi_of, to_wide};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND};
 use windows::Win32::Graphics::Dwm::{
@@ -27,7 +27,6 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::UI::Controls::MARGINS;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 
 /// 一键回退开关：置 false 关闭 Mica，所有窗口使用实色表面（色值即 Mica 同色）。
 pub const USE_MICA: bool = true;
@@ -292,7 +291,7 @@ fn probe_font(name: &str) -> bool {
 /// 按窗口 DPI 创建 UI 字体（pt → 像素，负高度映射字符高）。调用方负责 DeleteObject。
 pub fn ui_font(hwnd: HWND, pt: i32, weight: i32) -> HFONT {
     unsafe {
-        let dpi = GetDpiForWindow(hwnd).max(96) as i32;
+        let dpi = dpi_of(hwnd);
         let h = -(pt * dpi / 72);
         let fam = family();
         CreateFontW(

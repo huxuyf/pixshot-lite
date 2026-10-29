@@ -89,7 +89,7 @@ impl Tip {
             };
         }
         // 与工具条一致：排除出截屏捕获
-        let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+        util::exclude_from_capture(hwnd);
         Tip { hwnd }
     }
 

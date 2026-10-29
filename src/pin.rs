@@ -38,7 +38,6 @@ use windows::Win32::Graphics::Gdi::{
     PAINTSTRUCT, SRCCOPY, STRETCH_BLT_MODE,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -71,15 +70,14 @@ fn margin_for_dpi(dpi: u32) -> i32 {
     (SHADOW_MARGIN_LOGICAL * dpi.max(96) as i32 / 96).clamp(6, 64)
 }
 
-/// 贴图在截图点所在显示器上的 DPI（拿不到时按 96 处理）。
+/// 贴图在截图点所在显示器上的 DPI。
+///
+/// 不可用时回退到**系统 DPI**（见 [`crate::dpi::dpi_of_monitor`]）：Windows 7 没有
+/// 每显示器 DPI，系统 DPI 就是正确答案；这里不能回退到硬编码 96，
+/// 那会在 125% / 150% 缩放下把贴图留白与尺寸算错。
 unsafe fn monitor_dpi_at(x: i32, y: i32) -> u32 {
     let mon = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
-    let (mut dx, mut dy) = (96u32, 96u32);
-    if GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy).is_ok() {
-        dx.max(96)
-    } else {
-        96
-    }
+    crate::dpi::dpi_of_monitor(mon) as u32
 }
 
 /// 按缩放比换算出图像在窗口内的像素尺寸（最小 1px）。

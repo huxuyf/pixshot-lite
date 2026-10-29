@@ -8,6 +8,7 @@
 //! 自绘方案用 `SetCapture` 实现「点击菜单外关闭」，不依赖前台权限，
 //! 且支持禁用项与分隔线。
 
+use crate::dpi;
 use crate::theme;
 use crate::util::{self, raw, register_class_w, to_wide};
 use windows::core::PCWSTR;
@@ -17,7 +18,6 @@ use windows::Win32::Graphics::Gdi::{
     GetStockObject, ReleaseDC, RoundRect, SelectObject, HDC, NULL_BRUSH, PS_SOLID,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -169,7 +169,7 @@ unsafe fn show_impl(x: i32, y: i32, items: &[Item]) -> Option<usize> {
     let d = &mut *data;
     measure(hwnd, d);
 
-    let dpi = util::dpi_of(hwnd).max(GetDpiForSystem() as i32);
+    let dpi = util::dpi_of(hwnd).max(dpi::system_dpi());
     let (vx, vy, vw, vh) = crate::capture::virtual_screen_rect();
     let mh = menu_height(d, dpi);
     // 贴边时向内收 / 向上翻转，避免菜单跑出屏幕
@@ -219,7 +219,7 @@ fn menu_height(d: &Data, _dpi: i32) -> i32 {
 
 /// 用真实字体测量最宽项，得出菜单宽度与各项高度。
 unsafe fn measure(hwnd: HWND, d: &mut Data) {
-    let dpi = util::dpi_of(hwnd).max(GetDpiForSystem() as i32);
+    let dpi = util::dpi_of(hwnd).max(dpi::system_dpi());
     d.item_h = util::scaled(34, dpi);
     d.sep_h = util::scaled(9, dpi);
     d.pad = util::scaled(6, dpi);

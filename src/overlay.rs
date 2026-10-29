@@ -250,7 +250,7 @@ unsafe fn run() -> Option<Selection> {
     // `PIXSHOT_OVERLAY_CAPTURABLE=1` 时跳过，便于用普通屏幕截图回归"冻结观感"
     // （正常使用不应设置此变量）。
     if std::env::var_os("PIXSHOT_OVERLAY_CAPTURABLE").is_none() {
-        let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+        util::exclude_from_capture(hwnd);
     }
     // 表面先用透明底铺一遍（兜底：万一快照比虚拟屏幕小，也不会留下 alpha=0 的像素，
     // 那种像素会让点击穿透、拖拽发不起来），再用整屏快照覆盖。
@@ -519,7 +519,7 @@ unsafe fn finish_selection(hwnd: HWND, _lp: LPARAM) {
 
 /// 框选层横跨整个虚拟屏幕，用系统 DPI 作为框线粗细/拖动阈值的换算基准。
 fn overlay_dpi() -> i32 {
-    unsafe { windows::Win32::UI::HiDpi::GetDpiForSystem().max(96) as i32 }
+    crate::dpi::system_dpi()
 }
 
 /// 重画框线：清掉上一帧、画上当前帧，再把脏区提交给分层窗口。

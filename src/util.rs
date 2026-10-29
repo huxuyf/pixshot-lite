@@ -11,6 +11,8 @@
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::dpi;
+
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -19,13 +21,13 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, CreateWindowExW, DefWindowProcW, GetCursorPos, GetWindowTextW,
     GWLP_WNDPROC, KillTimer, LoadCursorW, MessageBoxW, RegisterClassW, SetTimer, SetWindowLongPtrW,
-    WindowFromPoint, HMENU, IDC_ARROW, IDC_CROSS, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT, WNDPROC, WS_CHILD, WS_VISIBLE,
+    SetWindowDisplayAffinity, WindowFromPoint, HMENU, IDC_ARROW, IDC_CROSS, MB_ICONERROR,
+    MB_ICONINFORMATION, MB_OK, WDA_EXCLUDEFROMCAPTURE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT,
+    WNDPROC, WS_CHILD, WS_VISIBLE,
 };
 
 /// 全局「流程进行中」标志：防止遮罩/工具栏打开时被托盘/热键重复触发。
@@ -72,15 +74,28 @@ pub fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// 窗口当前 DPI（下限 96）。
+/// 窗口当前 DPI（下限 96）。实现见 [`crate::dpi`]：按平台能力探测，兼容 Windows 7。
 pub fn dpi_of(hwnd: HWND) -> i32 {
-    unsafe { GetDpiForWindow(hwnd).max(96) as i32 }
+    dpi::dpi_of(hwnd)
 }
 
 /// 逻辑像素 → 物理像素（四舍五入）。
 pub fn scaled(v: i32, dpi: i32) -> i32 {
     let d = dpi.max(96);
     ((v as f32 * d as f32) / 96.0).round() as i32
+}
+
+/// 把窗口排除出屏幕捕获（`WDA_EXCLUDEFROMCAPTURE`）。
+///
+/// **刻意不做降级**：`WDA_EXCLUDEFROMCAPTURE`(0x11) 需要 Windows 10 2004+，更早的系统
+/// 只认识 `WDA_MONITOR`(0x01) —— 而 `WDA_MONITOR` 会让窗口在第三方截图 / 录屏里呈
+/// **黑块**，比"不设防"更影响观感。所以更早系统上这次调用会失败并被忽略，
+/// 效果等同于不设防（取舍见 docs/win7-support-plan.md 第 5 章步骤 4）。
+///
+/// 实际风险很小：本项目的窗口都出现在遮罩之后，截图取的是按下热键瞬间的整屏冻结图，
+/// 不会把工具条 / 遮罩自己拍进去。
+pub fn exclude_from_capture(hwnd: HWND) {
+    let _ = unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) };
 }
 
 pub type WndProc = unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT;

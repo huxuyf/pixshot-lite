@@ -22,17 +22,42 @@
 
 ## 构建与运行
 
-要求 Windows 10 1809+ / Windows 11，以及 [Rust](https://rustup.rs/)
-（`x86_64-pc-windows-msvc` 或 `x86_64-pc-windows-gnu` 均可）。
+**运行要求：Windows 7 SP1 及以上（x64）**，含 Windows 8 / 8.1 / 10 / 11。
+Windows 7 / 8 上有若干能力降级，见「已知限制」。
+
+**构建要求**比运行要求苛刻，因为要产出 Windows 7 兼容的二进制：
+
+- Rust **nightly** 工具链 —— 仓库根的 `rust-toolchain.toml` 已指定，`cargo` 会自动装上。
+  发布目标 `x86_64-win7-windows-gnu` 是 tier-3 目标，rustup 不提供预编译 std，
+  必须 `-Z build-std` 现场编译 std，所以只有 nightly 能做发布构建。
+- **MinGW**（MSYS2，提供 `gcc` / `windres`）—— GNU 宿主工具链的链接器，
+  同时 `build.rs` 用它把图标与进程清单嵌进 exe。
+
+为什么必须专门走这个目标：官方默认目标（`x86_64-pc-windows-msvc` 等）编出来的产物会
+静态依赖 Windows 8 / 10 才有的系统原语（`WaitOnAddress`、`ProcessPrng`、
+`GetSystemTimePreciseAsFileTime`、`GetHostNameW`，以及 `GetDpiForWindow` 一族），
+在 Windows 7 上**加载期**就失败（报「缺少 xxx.dll」或「无法定位程序输入点」）。
+背景与取舍见 [docs/win7-support-plan.md](docs/win7-support-plan.md)。
 
 ```powershell
-cargo build --release          # 发布构建
-cargo run --release            # 运行（常驻托盘，按 F1 或点托盘图标截图）
-cargo test                     # 单元 + 集成测试
-pwsh -File scripts\ci.ps1      # 本地 CI（check → test → build → E2E）
+# 发布构建（Windows 7 兼容；首次约 2 分钟，主要时间花在现场编译 std）
+cargo build --release -Z build-std --target x86_64-win7-windows-gnu
+
+# 日常开发（走本机默认目标，不付 build-std 的代价）
+cargo run --release             # 运行（常驻托盘，按 F1 或点托盘图标截图）
+cargo test                      # 单元 + 集成测试
+pwsh -File scripts\ci.ps1       # 本地 CI（check → test → build → Win7 兼容性闸门 → 体积护栏 → E2E）
 ```
 
-产物：`target\release\pixshot.exe`（单文件，约 1.6 MB）。
+发布产物：`target\x86_64-win7-windows-gnu\release\pixshot.exe`（单文件，约 1.9 MB）。
+比改造前略大，是因为 std 由 `-Z build-std` 现场编译；体积基线与 `ci.ps1` 的护栏已同步调整。
+
+要精确复现某次发布，用 CI 锁定的那个工具链（见 `.github/workflows/release.yml`）：
+
+```powershell
+cargo +nightly-2026-10-27-x86_64-pc-windows-gnu build --release -Z build-std --target x86_64-win7-windows-gnu
+```
+
 与增强版文件名相同，两版可在同一台机器上同时常驻；分发时建议按版本改名，
 如 `pixshot-lite.exe` / `pixshot-plus.exe`。
 
@@ -44,11 +69,13 @@ pwsh -File scripts\ci.ps1      # 本地 CI（check → test → build → E2E）
 这靠两道保障共同实现：
 
 - `app.manifest` 在进程启动前声明 `PerMonitorV2`（主保障，不会静默失效）；
-- `src/main.rs` 启动时再调一次 DPI API 作兜底，并校验实际生效的级别写入
-  `pixshot_diag.log`（`[boot] DPI 感知级别 = 2`）。
+- `src/main.rs` 启动时再走一遍 DPI 感知设置作兜底，并校验实际生效的级别写入
+  `pixshot_diag.log`（`[boot] DPI 感知级别 = 2（本平台可达上限 2）`）。
 
-若日志里出现「警告：非每显示器感知」，说明两道保障都没生效，此时截图会被系统
-按逻辑分辨率捕获后放大（即"模糊"），需要排查构建是否漏嵌了清单。
+校验的**预期值按平台可达上限动态取**，而不是写死 2：Windows 7 / 8 没有每显示器 DPI，
+系统感知（级别 1）就是那些系统的上限，此时日志不会误报。若在 Windows 8.1 / 10 / 11 上
+看到「低于本平台可达上限」，说明两道保障都没生效，截图会被系统按逻辑分辨率捕获后
+放大（即"模糊"），需要排查构建是否漏嵌了清单。
 
 跳过资源嵌入（会**同时**跳过图标与清单，DPI 仅剩运行时兜底）：
 `PIXSHOT_NO_ICON=1 cargo build`。
@@ -89,11 +116,16 @@ toast_ms = 1600              ; 操作提示的停留毫秒数
 | 按 F1 无反应 | F1 可能被其他程序占用，本版本会自动回退到键盘钩子兜底；也可在 `config.ini` 里换一个热键 |
 | 双击运行也失败、托盘图标空白 | 运行目录被打了低完整性标签（常见于沙箱类工具写入的目录）。运行 `pwsh -File scripts\fix_integrity.ps1` 修复，或把 exe 复制到普通目录再运行 |
 | 提示「PixShot 已启动，无需再次执行」 | 单实例保护：先在任务管理器结束所有 `pixshot.exe` 再启动 |
-| 截图模糊、文字看不清 | 检查 `pixshot_diag.log` 里的 `[boot] DPI 感知级别` 是否为 2。若为 0/1，说明进程未按每显示器 DPI 感知运行，截图被系统放大；优先确认所用的 exe 是正常构建产物（含 `app.manifest`），并检查 exe 属性 →「兼容性」→「更改高 DPI 设置」里是否误勾了「替代高 DPI 缩放行为」 |
+| 截图模糊、文字看不清 | 检查 `pixshot_diag.log` 里的 `[boot] DPI 感知级别`：Windows 8.1 / 10 / 11 上应为 `2（本平台可达上限 2）`；Windows 7 / 8 上应为 `1（本平台可达上限 1）`，属正常。若**低于上限**，说明进程未按该平台最高级别运行、截图被系统放大；优先确认所用的 exe 是正常构建产物（含 `app.manifest`），并检查 exe 属性 →「兼容性」→「更改高 DPI 设置」里是否误勾了「替代高 DPI 缩放行为」 |
 
 ## 已知限制
 
-- 仅支持 Windows
+- 仅支持 Windows（Windows 7 SP1 及以上，x64）
+- **Windows 7 / 8 上的能力降级**（系统本身缺对应 API，程序自动回退）：
+  - DPI 感知只能到**系统级**；每显示器感知需要 Windows 8.1 起步，
+    多显示器缩放比例不同时截图与贴图坐标可能有偏差；
+  - 没有 Mica / 圆角 / 深色标题栏（Win10/11 的 DWM 能力），界面为实色表面；
+  - 窗口「排除出截屏捕获」需要 Windows 10 2004 起步，更早系统上自动跳过。
 - 本版不含 OCR；需要识别文字请用增强版 [`huxuyf/pixshot`](https://github.com/huxuyf/pixshot)
 - 两版默认热键都是 F1，同时运行会互相抢占，需要并用请给其中一个改 `config.ini`
 - 多显示器基于虚拟屏幕坐标，支持负坐标副屏

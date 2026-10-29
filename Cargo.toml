@@ -16,7 +16,11 @@ windows = { version = "0.58", features = [
     "Win32_Storage_FileSystem",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
-    "Win32_UI_HiDpi",
+    # 注意：**不要**加 "Win32_UI_HiDpi"。该特性把 GetDpiForWindow / GetDpiForSystem /
+    # SetProcessDpiAwarenessContext 等 Windows 10 才有的 user32 函数、以及
+    # GetDpiForMonitor / SetProcessDpiAwareness 等 Windows 8.1 才有的 shcore 函数
+    # 做成静态导入，会让产物在 Windows 7 上加载期就失败（无法定位程序输入点）。
+    # 这些能力改由 src/dpi.rs 运行时 GetProcAddress 探测 + 更早系统的等价回退提供。
     "Win32_UI_Controls_Dialogs",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_LibraryLoader",

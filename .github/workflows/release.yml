@@ -18,10 +18,20 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# 发布产物的目标与工具链（见 docs/win7-support-plan.md 第 5 章步骤 1/6）：
+# - 目标 x86_64-win7-windows-gnu：Windows 7 兼容目标。该目标没有预编译 std，
+#   必须 -Z build-std 现场编译，所以工具链必须是 nightly；
+# - 工具链锁到**具体日期**：tier-3 目标无 CI 保障，浮动 nightly 可能某天直接编不过。
+#   仓库根的 rust-toolchain.toml 只能写浮动名（rustup 不接受 <channel>-<日期>-<宿主> 写法），
+#   所以这里显式指定完整名，保证发布可复现。
+env:
+  TOOLCHAIN: nightly-2026-10-27-x86_64-pc-windows-gnu
+  TARGET: x86_64-win7-windows-gnu
+
 jobs:
   build-release:
     name: 编译并发布 Release
-    # 必须是 Windows：build.rs 用 rc.exe 嵌入应用图标，
+    # 必须是 Windows：build.rs 需要资源编译器嵌入图标与清单（GNU 走 MinGW 的 windres），
     # 且依赖链中的 Win32 API 绑定只能在 Windows 目标上链接。
     runs-on: windows-latest
 
@@ -29,13 +39,31 @@ jobs:
       - name: 检出源码
         uses: actions/checkout@v7
 
-      - name: 安装 Rust 工具链（MSVC）
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
+      # GNU 宿主工具链的链接器（gcc）、build.rs 的资源编译器（windres）以及兼容性闸门
+      # 要用的 objdump 都来自 MinGW。镜像自带 MSYS2，把它的 bin 目录挂到 PATH 最前。
+      - name: 准备 MinGW（gcc / windres / objdump）
+        shell: pwsh
+        run: |
+          $mingw = 'C:\msys64\mingw64\bin'
+          foreach ($tool in @('gcc.exe', 'windres.exe', 'objdump.exe')) {
+            if (-not (Test-Path (Join-Path $mingw $tool))) { throw "缺少 $mingw\$tool" }
+          }
+          $mingw | Out-File -FilePath $env:GITHUB_PATH -Append
+          & (Join-Path $mingw 'gcc.exe') --version | Select-Object -First 1
+
+      - name: 安装锁定版本的 Rust nightly（含 rust-src 与 rust-mingw）
+        shell: pwsh
+        run: |
+          # rust-src：-Z build-std 需要 std 源码；rust-mingw：GNU 目标的导入库与 crt。
+          rustup toolchain install ${{ env.TOOLCHAIN }} `
+            --profile minimal --component rust-src --component rust-mingw
+          rustup run ${{ env.TOOLCHAIN }} rustc --version
 
       - name: 缓存 cargo 构建（加速后续构建）
         uses: Swatinem/rust-cache@v2
+        with:
+          # 每个目标的产物分开缓存，避免与本地/其他目标互相挤掉。
+          key: ${{ env.TARGET }}
 
       - name: 读取版本号（以 Cargo.toml 为唯一来源）
         id: version
@@ -48,14 +76,29 @@ jobs:
           "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "版本号：$version"
 
-      - name: 编译 Release
-        run: cargo build --release --locked
+      - name: 编译 Release（Windows 7 兼容目标）
+        run: cargo +${{ env.TOOLCHAIN }} build --release --locked -Z build-std --target ${{ env.TARGET }}
 
-      - name: 校验产物与体积
+      - name: Windows 7 兼容性闸门 + 体积校验
         shell: pwsh
         run: |
-          $exe = 'target/release/pixshot.exe'
+          $exe = 'target/${{ env.TARGET }}/release/pixshot.exe'
           if (-not (Test-Path $exe)) { throw "未生成 $exe" }
+
+          # 兼容性闸门：导入表里不得出现任何 Windows 8 / 10 才有的依赖
+          # （api-set 模块，或 DLL 在但函数不存在的入口点）。这是"能在 Windows 7 启动"
+          # 的唯一可自动化保障，与 scripts\ci.ps1 第 5 步同源。
+          $dump = (& objdump -p $exe 2>&1 | Out-String)
+          $pattern = 'api-ms-win|bcryptprimitives|WaitOnAddress|WakeByAddress|ProcessPrng|' +
+                     'GetSystemTimePreciseAsFileTime|GetHostNameW|RoOriginateErrorW|' +
+                     'GetDpiFor|SetProcessDpiAwareness|ThreadDpiAwarenessContext|SetProcessDPIAware'
+          $hit = @(($dump -split "`r?`n") | Where-Object { $_ -match $pattern })
+          if ($hit.Count -gt 0) {
+            $hit | ForEach-Object { Write-Host $_ }
+            throw ('产物含 {0} 处 Win8/10 专属依赖，在 Windows 7 上会启动失败' -f $hit.Count)
+          }
+          Write-Host '兼容性闸门通过：导入表无 api-set / Win8+ 依赖'
+
           $mb = (Get-Item $exe).Length / 1MB
           Write-Host ('产物体积 {0:N2} MB' -f $mb)
           # 与 scripts\ci.ps1 一致的体积护栏：防止依赖/特性膨胀。
@@ -66,12 +109,15 @@ jobs:
         shell: pwsh
         run: |
           $version = '${{ steps.version.outputs.value }}'
+          $src = 'target/${{ env.TARGET }}/release/pixshot.exe'
           # 分发时按版本改名，且不带空格，方便直接下载运行。
           $name = "pixshot-lite-v$version-x64.exe"
-          Copy-Item 'target/release/pixshot.exe' "target/release/$name"
-          $hash = (Get-FileHash "target/release/$name" -Algorithm SHA256).Hash
-          "$hash  $name" | Out-File -FilePath 'target/release/SHA256SUMS.txt' -Encoding ascii
-          "asset=target/release/$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $outDir = 'target/${{ env.TARGET }}/release'
+          Copy-Item $src "$outDir/$name"
+          $hash = (Get-FileHash "$outDir/$name" -Algorithm SHA256).Hash
+          "$hash  $name" | Out-File -FilePath "$outDir/SHA256SUMS.txt" -Encoding ascii
+          "asset=$outDir/$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sums=$outDir/SHA256SUMS.txt" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "sha256=$hash"          | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "SHA256: $hash"
 
@@ -108,11 +154,21 @@ jobs:
 
           精简版 Windows 桌面工具：框选截图 / 贴图置顶（Rust + Win32，单文件免安装）。
 
+          **系统要求：Windows 7 SP1 及以上（x64，含 Windows 8 / 8.1 / 10 / 11）。**
+
           - 提交：${{ github.sha }}
           - 构建时间：$stamp
+          - 构建目标：``${{ env.TARGET }}``（``${{ env.TOOLCHAIN }}``，现场编译 std）
           - SHA256：${{ steps.package.outputs.sha256 }}
 
-          下载下方的 ``pixshot-lite-v$version-x64.exe`` 直接运行，无需安装、无 DLL 依赖。
+          下载下方的 ``pixshot-lite-v$version-x64.exe`` 直接运行，无需安装、无需额外运行时。
+
+          > **Windows 7 / 8 上的能力降级**（系统本身没有对应 API，程序会自动回退）：
+          > - DPI 感知只能到**系统级**；每显示器感知需要 Windows 8.1 起步，
+          >   多显示器缩放比例不同时截图与贴图坐标可能有偏差；
+          > - 没有 Mica / 圆角 / 深色标题栏（Win10/11 的 DWM 能力），界面为实色表面；
+          > - 窗口「排除出截屏捕获」需要 Windows 10 2004 起步，更早系统上会自动跳过
+          >   （第三方截图工具可能拍到本程序自己的悬浮窗口）。
 
           > 本 Release 跟随 main 分支更新：同一版本号重复推送会刷新这里的附件与 tag，
           > 不会新增一条 Release。需要留档某次具体构建，请到 Actions 页面下载该次运行的产物；
@@ -131,4 +187,4 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             ${{ steps.package.outputs.asset }}
-            target/release/SHA256SUMS.txt
+            ${{ steps.package.outputs.sums }}

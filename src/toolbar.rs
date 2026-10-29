@@ -104,7 +104,7 @@ pub fn run(image: Arc<CapturedImage>) -> Result<()> {
 unsafe fn run_impl(image: Arc<CapturedImage>) -> Result<()> {
     register_class_w("PixShotToolbar", toolbar_proc, false, false, false);
 
-    let dpi = windows::Win32::UI::HiDpi::GetDpiForSystem().max(96) as i32;
+    let dpi = crate::dpi::system_dpi();
     let (tw, th) = (util::scaled(TB_W, dpi), util::scaled(TB_H, dpi));
 
     // 定位在选区下方 8px，水平对齐选区中线，越界则钳制回虚拟屏幕内
@@ -140,7 +140,7 @@ unsafe fn run_impl(image: Arc<CapturedImage>) -> Result<()> {
         return Err(AppError::Config("创建工具栏窗口失败".into()));
     }
     // 排除出截屏捕获：防止工具栏出现在后续截图/录屏画面中（截图工具惯例）
-    let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+    util::exclude_from_capture(hwnd);
     let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
     let _ = SetForegroundWindow(hwnd);
     // 显式提到置顶带最上层：框选遮罩此时是**不透明的置顶窗口**（显示冻结画面），

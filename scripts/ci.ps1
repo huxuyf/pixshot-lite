@@ -1,14 +1,16 @@
 <#
 PixShot 本地 CI 流水线
 ======================
-一条命令跑完「编译检查 → 单元/集成测试 → Debug 构建 → Release 构建 → 体积护栏 → GUI 端到端」，
-任一环节失败立即中止并返回该环节编号，便于快速定位。
+一条命令跑完「编译检查 → 单元/集成测试 → Debug 构建 → Release 构建 → Win7 兼容性闸门
+→ 体积护栏 → GUI 端到端」，任一环节失败立即中止并返回该环节编号，便于快速定位。
 
 设计原则
 --------
 - 不做任何隐式修复：只做检查和断言，不自动改写源码或产物。
 - 原生命令（cargo）失败不会触发 PowerShell 异常，因此每步都显式校验 $LASTEXITCODE。
 - E2E 会接管鼠标键盘约 20 秒，默认开启但可用 -SkipE2E 关闭（无桌面/CI 环境必须关闭）。
+- 发布产物走 Windows 7 兼容目标（x86_64-win7-windows-gnu + -Z build-std），
+  Debug 构建仍走本机默认目标以免每次迭代都重编一份 std（见 docs/win7-support-plan.md）。
 
 用法
 ----
@@ -19,20 +21,21 @@ PixShot 本地 CI 流水线
 参数
 ----
   -SkipE2E        跳过 GUI 端到端测试
-  -MaxSizeMB      release 产物体积上限（默认 2.0，用于防止依赖/特性膨胀）
+  -MaxSizeMB      release 产物体积上限（默认 2.5；build-std 现场编译的 std 比预编译版大，
+                  基线见 docs/win7-support-plan.md 第 5 章步骤 6）
   -TargetDir      自定义 CARGO_TARGET_DIR（默认仓库内 target\，不设置该环境变量）
 
 退出码
 ------
   0  全部通过
   1  初始化/前置条件失败
-  2..7  对应步骤失败（见输出中的 [n/6] 编号）
+  2..8  对应步骤失败（见输出中的 [n/7] 编号）
 #>
 
 [CmdletBinding()]
 param(
     [switch]$SkipE2E,
-    [double]$MaxSizeMB = 2.0,
+    [double]$MaxSizeMB = 2.5,
     [string]$TargetDir = ''
 )
 
@@ -57,13 +60,39 @@ if (-not (Test-Path (Join-Path $root 'Cargo.toml'))) {
 
 Push-Location $root
 $script:Step = 0
-$script:Total = if ($SkipE2E) { 5 } else { 6 }
+$script:Total = if ($SkipE2E) { 6 } else { 7 }
+
+# 发布产物所在的目标三元组（Windows 7 兼容目标；见 docs/win7-support-plan.md 第 5 章）
+$releaseTarget = 'x86_64-win7-windows-gnu'
 
 function Assert-Exit {
     param([string]$What)
     if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
         throw ("{0} 失败（exit {1}）" -f $What, $LASTEXITCODE)
     }
+}
+
+# 取产物的导入表文本。优先 objdump（MinGW/MSYS2，与 build.rs 查找 windres 的策略一致），
+# 其次 dumpbin（MSVC）。两者都没有时**直接失败**而不是静默跳过：
+# 兼容性闸门是本项目"能否在 Windows 7 启动"的唯一自动化保障，静默跳过等于没有闸门。
+function Get-ImportDump {
+    param([string]$Exe)
+    foreach ($cand in @('objdump.exe', 'objdump')) {
+        if (Get-Command $cand -ErrorAction SilentlyContinue) {
+            return (& $cand -p $Exe 2>&1 | Out-String)
+        }
+    }
+    foreach ($p in @('C:\msys64\mingw64\bin\objdump.exe', 'C:\msys64\usr\bin\objdump.exe')) {
+        if (Test-Path $p) {
+            return (& $p -p $Exe 2>&1 | Out-String)
+        }
+    }
+    foreach ($cand in @('dumpbin.exe', 'dumpbin')) {
+        if (Get-Command $cand -ErrorAction SilentlyContinue) {
+            return (& $cand /imports $Exe 2>&1 | Out-String)
+        }
+    }
+    throw '找不到 objdump（MSYS2/MinGW）或 dumpbin（MSVC），无法校验产物导入表'
 }
 
 function Invoke-Step {
@@ -119,14 +148,37 @@ Invoke-Step 'cargo build --profile dev（供 E2E 使用）' {
 }
 
 # ---------------------------------------------------------- 4. Release 构建
-Invoke-Step 'cargo build --release（发布产物）' {
-    cargo build --release --offline
+# 发布产物必须走 Windows 7 兼容目标：该目标没有预编译 std，故需 -Z build-std
+# （nightly 由仓库根的 rust-toolchain.toml 锁定）。默认目标编出来的产物会静态依赖
+# Windows 8/10 才有的系统原语，在 Windows 7 上加载期即失败。
+Invoke-Step "cargo build --release（发布产物，目标 $releaseTarget + -Z build-std）" {
+    cargo build --release --offline -Z build-std --target $releaseTarget
     Assert-Exit 'cargo build --release'
 }
 
-# ------------------------------------------------------------ 5. 体积护栏
+# ------------------------------------------------- 5. Windows 7 兼容性静态闸门
+# 断言导入表里不含任何 Windows 8 / 10 才有的依赖。这是"能在 Windows 7 启动"的
+# 唯一可自动化保障（真机功能验收不在 CI 能力范围内，见 docs/win7-support-plan.md 第 7 章）。
+Invoke-Step 'Windows 7 兼容性闸门（产物导入表不得含 Win8+ / api-set 依赖）' {
+    $exe = Join-Path $targetRoot "$releaseTarget\release\pixshot.exe"
+    if (-not (Test-Path $exe)) {
+        throw "未找到 $exe"
+    }
+    $dump = Get-ImportDump -Exe $exe
+    # 黑名单两类：不存在于 NT 6.1 的 api-set / 模块，以及 DLL 在但函数不存在的入口点。
+    $pattern = 'api-ms-win|bcryptprimitives|WaitOnAddress|WakeByAddress|ProcessPrng|' +
+    'GetSystemTimePreciseAsFileTime|GetHostNameW|RoOriginateErrorW|' +
+    'GetDpiFor|SetProcessDpiAwareness|ThreadDpiAwarenessContext|SetProcessDPIAware'
+    $hit = @(($dump -split "`r?`n") | Where-Object { $_ -match $pattern })
+    if ($hit.Count -gt 0) {
+        $hit | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        throw ('产物含 {0} 处 Windows 8/10 才有的依赖，在 Windows 7 上会启动失败' -f $hit.Count)
+    }
+}
+
+# ------------------------------------------------------------ 6. 体积护栏
 Invoke-Step '发布体积护栏' {
-    $exe = Join-Path $targetRoot 'release\pixshot.exe'
+    $exe = Join-Path $targetRoot "$releaseTarget\release\pixshot.exe"
     if (-not (Test-Path $exe)) {
         throw "未找到 $exe"
     }
@@ -137,7 +189,9 @@ Invoke-Step '发布体积护栏' {
     }
 }
 
-# -------------------------------------------------------------- 6. GUI E2E
+# -------------------------------------------------------------- 7. GUI E2E
+# 用默认目标的 Debug 产物跑：E2E 验的是交互行为，不是系统兼容性
+# （兼容性由第 5 步的静态闸门负责），没必要为它再编一份 win7 目标的 std。
 if (-not $SkipE2E) {
     Invoke-Step 'GUI 端到端（框选 → 贴图 → 复制，会接管鼠标键盘）' {
         $e2e = Join-Path $PSScriptRoot 'gui_e2e_test.ps1'

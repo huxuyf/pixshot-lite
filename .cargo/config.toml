@@ -1,0 +1,16 @@
+# Windows 7+ 兼容构建配置（见 docs/win7-support-plan.md 第 5 章步骤 1）
+#
+# `windows_slim_errors` 是 `windows-result` 提供的编译期开关：置上后它不再引用
+# WinRT 的 `RoOriginateErrorW`，产物里的 `api-ms-win-core-winrt-error-l1-1-0.dll`
+# 依赖随之消失（该 DLL 在 Windows 8 之前不存在）。代价是失去 WinRT 扩展错误信息，
+# 本项目只用 HRESULT + FormatMessageW，不受影响。
+[target.x86_64-win7-windows-gnu]
+rustflags = ["--cfg", "windows_slim_errors"]
+
+# 发布产物必须走 win7 目标，否则会静态依赖 Windows 8 / 10 才有的系统原语
+# （WaitOnAddress / ProcessPrng / GetSystemTimePreciseAsFileTime / GetHostNameW），
+# 在 Windows 7 上加载期即失败。构建命令见 README「构建与运行」。
+#
+# 该目标没有预编译 std，所以必须配合 `-Z build-std`（需要 nightly，已由
+# rust-toolchain.toml 锁定）。这里刻意**不**设 `[build] target`：日常的
+# check / test 仍走本机默认目标，保持迭代速度，只有发布构建才付 build-std 的代价。

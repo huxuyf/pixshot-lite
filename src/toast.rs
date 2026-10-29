@@ -8,6 +8,7 @@
 //! 本模块给出一个 1.6s 自动消失、不抢焦点、点击即消的圆角提示条。
 //! 同时只存在一个实例：新的提示会复用并重新定位已有窗口，避免连续操作时闪烁。
 
+use crate::dpi;
 use crate::util::{self, raw, register_class_w};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -15,7 +16,6 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, GetDC, ReleaseDC, RoundRect,
     SelectObject, GetStockObject, CreatePen, NULL_BRUSH, PS_SOLID,
 };
-use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const CLASS: &str = "PixShotToast";
@@ -81,7 +81,7 @@ unsafe fn place(hwnd: HWND) {
     }
     let text = &buf[..(n as usize).min(255)];
 
-    let dpi = util::dpi_of(hwnd).max(GetDpiForSystem() as i32);
+    let dpi = util::dpi_of(hwnd).max(dpi::system_dpi());
     let pad_x = util::scaled(16, dpi);
     let pad_y = util::scaled(9, dpi);
 
