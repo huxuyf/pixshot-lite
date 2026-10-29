@@ -62,8 +62,24 @@ Push-Location $root
 $script:Step = 0
 $script:Total = if ($SkipE2E) { 6 } else { 7 }
 
-# 发布产物所在的目标三元组（Windows 7 兼容目标；见 docs/win7-support-plan.md 第 5 章）
+# 发布产物所在的目标三元组，以及发布构建所需的工具链
+# （见 docs/win7-support-plan.md 第 5 章步骤 1/6）。
+# 工具链刻意写在这里而不是 rust-toolchain.toml：rustup 的工具链文件**不接受**
+# `<channel>-<日期>-<宿主>` 这种完整名（报 `target tuple in channel name`），
+# 而只写不带宿主的 nightly 会落到 msvc 宿主、在没有 MSVC 链接器的机器上直接编不过
+# （实测 GitHub runner 上的 rustup 版本会因此让 `rustc -vV` 直接失败）。
 $releaseTarget = 'x86_64-win7-windows-gnu'
+$releaseToolchain = 'nightly-2026-10-27-x86_64-pc-windows-gnu'
+
+# 发布构建需要这个 nightly 与它的 rust-src（-Z build-std 要现场编译 std）。
+# 缺失时直接给安装命令，别等到第 4 步才报一个难以理解的 cargo 错误。
+$installedToolchains = (& rustup toolchain list 2>$null) -join "`n"
+if ($installedToolchains -notmatch [regex]::Escape($releaseToolchain)) {
+    Write-Host ("缺少发布构建所需的工具链 {0}，请先安装：" -f $releaseToolchain) -ForegroundColor Red
+    Write-Host ("  rustup toolchain install {0} --component rust-src" -f $releaseToolchain) -ForegroundColor DarkGray
+    Pop-Location
+    exit 1
+}
 
 function Assert-Exit {
     param([string]$What)
@@ -152,7 +168,7 @@ Invoke-Step 'cargo build --profile dev（供 E2E 使用）' {
 # （nightly 由仓库根的 rust-toolchain.toml 锁定）。默认目标编出来的产物会静态依赖
 # Windows 8/10 才有的系统原语，在 Windows 7 上加载期即失败。
 Invoke-Step "cargo build --release（发布产物，目标 $releaseTarget + -Z build-std）" {
-    cargo build --release --offline -Z build-std --target $releaseTarget
+    cargo +$releaseToolchain build --release --offline -Z build-std --target $releaseTarget
     Assert-Exit 'cargo build --release'
 }
 

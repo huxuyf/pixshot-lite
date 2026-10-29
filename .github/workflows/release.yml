@@ -30,13 +30,20 @@ concurrency:
 # - 目标 x86_64-win7-windows-gnu：Windows 7 兼容目标。该目标没有预编译 std，
 #   必须 -Z build-std 现场编译，所以工具链必须是 nightly；
 # - 工具链锁到**具体日期**：tier-3 目标无 CI 保障，浮动 nightly 可能某天直接编不过。
-#   仓库根的 rust-toolchain.toml 只能写浮动名（rustup 不接受 <channel>-<日期>-<宿主> 写法），
-#   所以这里显式指定完整名，保证发布可复现。
+#   这里显式指定完整名而不依赖 rust-toolchain.toml —— rustup 的工具链文件不接受
+#   `<channel>-<日期>-<宿主>` 写法，而只写日期会落到 msvc 宿主；两种写法在某个
+#   rustup 版本上都会让仓库内的 `rustc -vV` 直接失败（GitHub runner 实测如此）。
 env:
   TOOLCHAIN: nightly-2026-10-27-x86_64-pc-windows-gnu
   TARGET: x86_64-win7-windows-gnu
   # push 触发时没有 inputs，此时恒为 true（正常发布）；手动触发时由输入决定。
   PUBLISH: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
+  # 把链接器钉到 MSYS2 的 mingw-w64 gcc。
+  # 镜像里另有一份独立的 MinGW（C:\mingw64，gcc 15.x），它是 **UCRT** 版：用它链接出来的
+  # 产物会导入 api-ms-win-crt-* 一族（其中 api-ms-win-crt-private-l1-1-0.dll 在
+  # Windows 7 上根本不存在），兼容性闸门会直接拦下。MSYS2 的 MINGW64 是 MSVCRT 版，
+  # 链接出来只依赖 Windows 7 自带的 msvcrt.dll。
+  CARGO_TARGET_X86_64_WIN7_WINDOWS_GNU_LINKER: 'C:\msys64\mingw64\bin\gcc.exe'
 
 jobs:
   build-release:
@@ -67,12 +74,19 @@ jobs:
       - name: 校验 MinGW 工具可见
         shell: pwsh
         run: |
-          foreach ($tool in @('gcc', 'windres', 'objdump')) {
+          foreach ($tool in @('windres', 'objdump')) {
             $found = (Get-Command $tool -ErrorAction SilentlyContinue).Source
             if (-not $found) { throw "PATH 中找不到 $tool" }
             Write-Host "$tool -> $found"
           }
-          gcc --version | Select-Object -First 1
+          # 链接器由 CARGO_TARGET_..._LINKER 指定，必须落在 MSYS2 的 MSVCRT 版 gcc 上；
+          # 镜像自带的 C:\mingw64 是 UCRT 版，用了会让产物依赖 Win7 上不存在的 api-set。
+          $linker = $env:CARGO_TARGET_X86_64_WIN7_WINDOWS_GNU_LINKER
+          if (-not (Test-Path $linker)) { throw "链接器不存在：$linker" }
+          if ($linker -notlike 'C:\msys64\*') { throw "链接器不在 MSYS2 下：$linker" }
+          Write-Host "linker -> $linker"
+          & $linker -dumpmachine
+          & $linker -v 2>&1 | Select-String -Pattern 'with-default-msvcrt' | Select-Object -First 1
 
       - name: 安装锁定版本的 Rust nightly（含 rust-src 与 rust-mingw）
         shell: pwsh

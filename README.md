@@ -27,11 +27,21 @@ Windows 7 / 8 上有若干能力降级，见「已知限制」。
 
 **构建要求**比运行要求苛刻，因为要产出 Windows 7 兼容的二进制：
 
-- Rust **nightly** 工具链 —— 仓库根的 `rust-toolchain.toml` 已指定，`cargo` 会自动装上。
+- Rust **nightly** 工具链，且需要 `rust-src`：
+
+  ```powershell
+  rustup toolchain install nightly-2026-10-27-x86_64-pc-windows-gnu --component rust-src
+  ```
+
   发布目标 `x86_64-win7-windows-gnu` 是 tier-3 目标，rustup 不提供预编译 std，
   必须 `-Z build-std` 现场编译 std，所以只有 nightly 能做发布构建。
-- **MinGW**（MSYS2，提供 `gcc` / `windres`）—— GNU 宿主工具链的链接器，
-  同时 `build.rs` 用它把图标与进程清单嵌进 exe。
+  刻意**不写** `rust-toolchain.toml`：rustup 的工具链文件不接受带宿主三元组的名字，
+  实测在 GitHub runner 上会让仓库内的 `rustc -vV` 直接失败。
+- **MSVCRT 版 MinGW-w64**（MSYS2 的 `mingw64` 环境，提供 `gcc` / `windres`）——
+  GNU 宿主工具链的链接器，同时 `build.rs` 用它把图标与进程清单嵌进 exe。
+  **别用 UCRT 版 MinGW**：那样链接出来的产物会导入 `api-ms-win-crt-*` 一族
+  （其中 `api-ms-win-crt-private-l1-1-0.dll` 在 Windows 7 上并不存在），启动即失败。
+  命令 `gcc -v` 若显示 `--with-default-msvcrt=ucrt`，就说明拿错了。
 
 为什么必须专门走这个目标：官方默认目标（`x86_64-pc-windows-msvc` 等）编出来的产物会
 静态依赖 Windows 8 / 10 才有的系统原语（`WaitOnAddress`、`ProcessPrng`、
@@ -41,7 +51,8 @@ Windows 7 / 8 上有若干能力降级，见「已知限制」。
 
 ```powershell
 # 发布构建（Windows 7 兼容；首次约 2 分钟，主要时间花在现场编译 std）
-cargo build --release -Z build-std --target x86_64-win7-windows-gnu
+# 工具链与日期必须显式写出，理由见上；CI 用的是同一个名字。
+cargo +nightly-2026-10-27-x86_64-pc-windows-gnu build --release -Z build-std --target x86_64-win7-windows-gnu
 
 # 日常开发（走本机默认目标，不付 build-std 的代价）
 cargo run --release             # 运行（常驻托盘，按 F1 或点托盘图标截图）
@@ -51,12 +62,6 @@ pwsh -File scripts\ci.ps1       # 本地 CI（check → test → build → Win7 
 
 发布产物：`target\x86_64-win7-windows-gnu\release\pixshot.exe`（单文件，约 1.9 MB）。
 比改造前略大，是因为 std 由 `-Z build-std` 现场编译；体积基线与 `ci.ps1` 的护栏已同步调整。
-
-要精确复现某次发布，用 CI 锁定的那个工具链（见 `.github/workflows/release.yml`）：
-
-```powershell
-cargo +nightly-2026-10-27-x86_64-pc-windows-gnu build --release -Z build-std --target x86_64-win7-windows-gnu
-```
 
 与增强版文件名相同，两版可在同一台机器上同时常驻；分发时建议按版本改名，
 如 `pixshot-lite.exe` / `pixshot-plus.exe`。
