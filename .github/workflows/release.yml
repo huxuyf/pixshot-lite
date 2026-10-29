@@ -2,10 +2,18 @@ name: Release
 
 # 推送到 main 即自动编译 Release 并在 Releases 页面发布；
 # 也可在 Actions 页面手动触发（workflow_dispatch）。
+#
+# 手动触发时把 publish 设为 false，可以只走「编译 + 兼容性闸门 + 体积护栏」而不发布
+# —— 用于在分支上验证这条链路（或试跑发布流程），不会移动 tag、不会覆盖线上 Release。
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: '是否发布到 Releases（false = 只编译校验，不移动 tag、不覆盖线上 Release）'
+        type: boolean
+        default: true
 
 # 发布 Release 需要写 contents 权限。
 permissions:
@@ -27,6 +35,8 @@ concurrency:
 env:
   TOOLCHAIN: nightly-2026-10-27-x86_64-pc-windows-gnu
   TARGET: x86_64-win7-windows-gnu
+  # push 触发时没有 inputs，此时恒为 true（正常发布）；手动触发时由输入决定。
+  PUBLISH: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
 
 jobs:
   build-release:
@@ -124,6 +134,7 @@ jobs:
       # tag 与 release 一一对应，所以同一版本重复推送时 tag 必须跟到最新提交，
       # 否则 release 里的 exe 是本次代码、tag 却停在首个提交，源码与二进制对不上。
       - name: 让 tag 跟随最新提交（同版本重复发布时）
+        if: env.PUBLISH == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -176,6 +187,7 @@ jobs:
           "@ | Out-File -FilePath 'release_notes.md' -Encoding utf8
 
       - name: 发布到 GitHub Releases
+        if: env.PUBLISH == 'true'
         uses: softprops/action-gh-release@v3
         with:
           # 版本号即 release 身份：已存在则原地更新，不存在则新建。
